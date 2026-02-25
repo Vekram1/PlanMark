@@ -6,10 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
+
+	"github.com/vikramoddiraju/planmark/internal/fsio"
 )
 
 const ProjectionSchemaVersionV01 = "v0.1"
+const BeadsManifestSchemaVersionV01 = "v0.1"
 
 type SourceRange struct {
 	Path      string `json:"path"`
@@ -29,14 +34,29 @@ type BeadsProjectionPayload struct {
 
 type BeadsAdapter struct {
 	projectionHashByID map[string]string
+	sourceHashByID     map[string]string
 	remoteIDByID       map[string]string
 	runtimeByID        map[string]RuntimeFields
 	lastSeenRuntime    map[string]string
 }
 
+type BeadsManifestEntry struct {
+	ID                  string `json:"id"`
+	RemoteID            string `json:"remote_id,omitempty"`
+	ProjectionHash      string `json:"projection_hash,omitempty"`
+	SourceHash          string `json:"source_hash,omitempty"`
+	LastSeenRuntimeHash string `json:"last_seen_runtime_hash,omitempty"`
+}
+
+type BeadsSyncManifest struct {
+	SchemaVersion string               `json:"schema_version"`
+	Entries       []BeadsManifestEntry `json:"entries"`
+}
+
 func NewBeadsAdapter() *BeadsAdapter {
 	return &BeadsAdapter{
 		projectionHashByID: map[string]string{},
+		sourceHashByID:     map[string]string{},
 		remoteIDByID:       map[string]string{},
 		runtimeByID:        map[string]RuntimeFields{},
 		lastSeenRuntime:    map[string]string{},
@@ -86,6 +106,10 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 	if err != nil {
 		return PushResult{}, err
 	}
+	drifted, err := a.DetectProjectionDrift(task)
+	if err != nil {
+		return PushResult{}, err
+	}
 	currentHash, err := projectionHash(payload)
 	if err != nil {
 		return PushResult{}, err
@@ -106,14 +130,35 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		remoteID = "beads:" + task.ID
 	}
 	a.projectionHashByID[task.ID] = currentHash
+	a.sourceHashByID[task.ID] = payload.SourceHash
 	a.remoteIDByID[task.ID] = remoteID
+
+	diagnostic := "projection updated"
+	if drifted {
+		diagnostic = "projection drift detected: source hash changed"
+	}
 
 	return PushResult{
 		RemoteID:   remoteID,
 		Mutated:    true,
 		Noop:       false,
-		Diagnostic: "projection updated",
+		Diagnostic: diagnostic,
 	}, nil
+}
+
+func (a *BeadsAdapter) DetectProjectionDrift(task TaskProjection) (bool, error) {
+	if strings.TrimSpace(task.ID) == "" {
+		return false, fmt.Errorf("task projection requires non-empty id")
+	}
+	if strings.TrimSpace(task.SourceHash) == "" {
+		return false, fmt.Errorf("task projection %q requires source hash", task.ID)
+	}
+
+	previousSourceHash, hasPrevious := a.sourceHashByID[task.ID]
+	if !hasPrevious {
+		return false, nil
+	}
+	return previousSourceHash != task.SourceHash, nil
 }
 
 func (a *BeadsAdapter) PullRuntimeFields(_ context.Context, ids []string) (map[string]RuntimeFields, error) {
@@ -139,6 +184,64 @@ func (a *BeadsAdapter) PullRuntimeFields(_ context.Context, ids []string) (map[s
 
 func (a *BeadsAdapter) SetRemoteRuntimeFields(id string, fields RuntimeFields) {
 	a.runtimeByID[id] = fields
+}
+
+func (a *BeadsAdapter) BuildSyncManifest() BeadsSyncManifest {
+	idsSet := map[string]struct{}{}
+	for id := range a.projectionHashByID {
+		idsSet[id] = struct{}{}
+	}
+	for id := range a.sourceHashByID {
+		idsSet[id] = struct{}{}
+	}
+	for id := range a.remoteIDByID {
+		idsSet[id] = struct{}{}
+	}
+	for id := range a.lastSeenRuntime {
+		idsSet[id] = struct{}{}
+	}
+
+	ids := make([]string, 0, len(idsSet))
+	for id := range idsSet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	entries := make([]BeadsManifestEntry, 0, len(ids))
+	for _, id := range ids {
+		entries = append(entries, BeadsManifestEntry{
+			ID:                  id,
+			RemoteID:            a.remoteIDByID[id],
+			ProjectionHash:      a.projectionHashByID[id],
+			SourceHash:          a.sourceHashByID[id],
+			LastSeenRuntimeHash: a.lastSeenRuntime[id],
+		})
+	}
+
+	return BeadsSyncManifest{
+		SchemaVersion: BeadsManifestSchemaVersionV01,
+		Entries:       entries,
+	}
+}
+
+func (a *BeadsAdapter) WriteSyncManifest(stateDir string) (string, error) {
+	resolvedStateDir := strings.TrimSpace(stateDir)
+	if resolvedStateDir == "" {
+		resolvedStateDir = ".planmark"
+	}
+	manifestPath := filepath.Join(resolvedStateDir, "sync", "beads-manifest.json")
+	manifest := a.BuildSyncManifest()
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal sync manifest: %w", err)
+	}
+	data = append(data, '\n')
+
+	if err := fsio.WriteFileAtomic(manifestPath, data, 0o644); err != nil {
+		return "", fmt.Errorf("write sync manifest: %w", err)
+	}
+	return manifestPath, nil
 }
 
 func acceptanceDigest(values []string) string {

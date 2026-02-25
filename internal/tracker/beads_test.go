@@ -2,6 +2,9 @@ package tracker
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -170,5 +173,146 @@ func TestBeadsPullUsesLastSeenRuntimeHash(t *testing.T) {
 	}
 	if updated.Status != "done" {
 		t.Fatalf("expected updated status done, got %#v", updated)
+	}
+}
+
+func TestBeadsDetectProjectionDriftBySourceHashMismatch(t *testing.T) {
+	adapter := NewBeadsAdapter()
+	ctx := context.Background()
+	task := TaskProjection{
+		ID:              "fixture.task.drift",
+		Title:           "Detect source hash drift",
+		SourcePath:      "testdata/plans/mixed.md",
+		SourceStartLine: 5,
+		SourceEndLine:   6,
+		SourceHash:      strings.Repeat("d", 64),
+		Accept:          []string{"cmd:go test ./..."},
+	}
+
+	drifted, err := adapter.DetectProjectionDrift(task)
+	if err != nil {
+		t.Fatalf("detect projection drift before first push: %v", err)
+	}
+	if drifted {
+		t.Fatalf("expected no drift before first push")
+	}
+
+	if _, err := adapter.PushTask(ctx, task); err != nil {
+		t.Fatalf("first push: %v", err)
+	}
+	drifted, err = adapter.DetectProjectionDrift(task)
+	if err != nil {
+		t.Fatalf("detect projection drift on unchanged task: %v", err)
+	}
+	if drifted {
+		t.Fatalf("expected no drift for unchanged source hash")
+	}
+
+	task.SourceHash = strings.Repeat("e", 64)
+	drifted, err = adapter.DetectProjectionDrift(task)
+	if err != nil {
+		t.Fatalf("detect projection drift after source change: %v", err)
+	}
+	if !drifted {
+		t.Fatalf("expected drift when source hash changes")
+	}
+}
+
+func TestBeadsPushSurfacesDriftDiagnostic(t *testing.T) {
+	adapter := NewBeadsAdapter()
+	ctx := context.Background()
+	task := TaskProjection{
+		ID:              "fixture.task.push_drift",
+		Title:           "Push drift diagnostic",
+		SourcePath:      "testdata/plans/mixed.md",
+		SourceStartLine: 10,
+		SourceEndLine:   12,
+		SourceHash:      strings.Repeat("f", 64),
+		Accept:          []string{"cmd:go test ./..."},
+	}
+
+	first, err := adapter.PushTask(ctx, task)
+	if err != nil {
+		t.Fatalf("first push: %v", err)
+	}
+	if first.Diagnostic != "projection updated" {
+		t.Fatalf("expected normal update diagnostic, got %q", first.Diagnostic)
+	}
+
+	task.SourceHash = strings.Repeat("0", 64)
+	second, err := adapter.PushTask(ctx, task)
+	if err != nil {
+		t.Fatalf("second push: %v", err)
+	}
+	if !strings.Contains(second.Diagnostic, "drift detected") {
+		t.Fatalf("expected drift diagnostic, got %q", second.Diagnostic)
+	}
+}
+
+func TestBeadsWriteSyncManifest(t *testing.T) {
+	adapter := NewBeadsAdapter()
+	ctx := context.Background()
+	firstTask := TaskProjection{
+		ID:              "fixture.task.manifest.a",
+		Title:           "Manifest A",
+		SourcePath:      "testdata/plans/mixed.md",
+		SourceStartLine: 1,
+		SourceEndLine:   2,
+		SourceHash:      strings.Repeat("1", 64),
+	}
+	secondTask := TaskProjection{
+		ID:              "fixture.task.manifest.b",
+		Title:           "Manifest B",
+		SourcePath:      "testdata/plans/mixed.md",
+		SourceStartLine: 3,
+		SourceEndLine:   4,
+		SourceHash:      strings.Repeat("2", 64),
+	}
+	if _, err := adapter.PushTask(ctx, secondTask); err != nil {
+		t.Fatalf("push second task: %v", err)
+	}
+	if _, err := adapter.PushTask(ctx, firstTask); err != nil {
+		t.Fatalf("push first task: %v", err)
+	}
+	adapter.SetRemoteRuntimeFields(firstTask.ID, RuntimeFields{
+		Status:   "in_progress",
+		Assignee: "agent.orange",
+		Priority: "P1",
+	})
+	if _, err := adapter.PullRuntimeFields(ctx, []string{firstTask.ID}); err != nil {
+		t.Fatalf("pull runtime fields: %v", err)
+	}
+
+	stateDir := filepath.Join(t.TempDir(), ".planmark")
+	manifestPath, err := adapter.WriteSyncManifest(stateDir)
+	if err != nil {
+		t.Fatalf("write sync manifest: %v", err)
+	}
+	expectedPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
+	if manifestPath != expectedPath {
+		t.Fatalf("expected manifest path %q, got %q", expectedPath, manifestPath)
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest BeadsSyncManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if manifest.SchemaVersion != BeadsManifestSchemaVersionV01 {
+		t.Fatalf("expected schema version %q, got %q", BeadsManifestSchemaVersionV01, manifest.SchemaVersion)
+	}
+	if len(manifest.Entries) != 2 {
+		t.Fatalf("expected two manifest entries, got %d", len(manifest.Entries))
+	}
+	if manifest.Entries[0].ID != firstTask.ID || manifest.Entries[1].ID != secondTask.ID {
+		t.Fatalf("expected entries sorted by id, got %#v", manifest.Entries)
+	}
+	if manifest.Entries[0].LastSeenRuntimeHash == "" {
+		t.Fatalf("expected first entry to include runtime hash")
+	}
+	if manifest.Entries[1].LastSeenRuntimeHash != "" {
+		t.Fatalf("expected second entry to omit runtime hash, got %#v", manifest.Entries[1])
 	}
 }
