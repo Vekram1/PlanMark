@@ -1,0 +1,134 @@
+package cli
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/vikramoddiraju/planmark/internal/compile"
+	contextpkg "github.com/vikramoddiraju/planmark/internal/context"
+	"github.com/vikramoddiraju/planmark/internal/protocol"
+)
+
+func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
+	positionalID := ""
+	filteredArgs := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--plan=") || strings.HasPrefix(arg, "--level=") || strings.HasPrefix(arg, "--format=") {
+			filteredArgs = append(filteredArgs, arg)
+			continue
+		}
+		if arg == "--plan" || arg == "--level" || arg == "--format" {
+			filteredArgs = append(filteredArgs, arg)
+			if i+1 < len(args) {
+				i++
+				filteredArgs = append(filteredArgs, args[i])
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			filteredArgs = append(filteredArgs, arg)
+			continue
+		}
+		if positionalID == "" {
+			positionalID = arg
+			continue
+		}
+		filteredArgs = append(filteredArgs, arg)
+	}
+
+	fs := flag.NewFlagSet("context", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	level := fs.String("level", "L0", "context level: L0|L1|L2")
+	format := fs.String("format", "text", "output format: text|json")
+	if err := fs.Parse(filteredArgs); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return protocol.ExitSuccess
+		}
+		fmt.Fprintln(stderr, err.Error())
+		return protocol.ExitUsageError
+	}
+
+	remaining := fs.Args()
+	if len(remaining) > 1 {
+		fmt.Fprintln(stderr, "usage: plan context <id> --plan <path> [--level L0|L1|L2] [--format text|json]")
+		return protocol.ExitUsageError
+	}
+	if len(remaining) == 1 {
+		if positionalID != "" {
+			fmt.Fprintln(stderr, "too many positional arguments for context")
+			return protocol.ExitUsageError
+		}
+		positionalID = remaining[0]
+	}
+	if strings.TrimSpace(positionalID) == "" {
+		fmt.Fprintln(stderr, "usage: plan context <id> --plan <path> [--level L0|L1|L2] [--format text|json]")
+		return protocol.ExitUsageError
+	}
+	if *planPath == "" {
+		fmt.Fprintln(stderr, "missing --plan")
+		return protocol.ExitUsageError
+	}
+
+	taskID := strings.TrimSpace(positionalID)
+	if taskID == "" {
+		fmt.Fprintln(stderr, "missing task id")
+		return protocol.ExitUsageError
+	}
+
+	content, err := os.ReadFile(*planPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "read plan: %v\n", err)
+		return protocol.ExitInternalError
+	}
+	compiled, err := compile.CompilePlan(*planPath, content, compile.NewParser(nil))
+	if err != nil {
+		fmt.Fprintf(stderr, "compile plan: %v\n", err)
+		return protocol.ExitInternalError
+	}
+
+	if strings.ToUpper(strings.TrimSpace(*level)) != "L0" {
+		fmt.Fprintf(stderr, "level %q not implemented yet (supported: L0)\n", *level)
+		return protocol.ExitUsageError
+	}
+
+	packet, err := contextpkg.BuildL0(compiled, taskID)
+	if err != nil {
+		if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+			fmt.Fprintln(stderr, err.Error())
+			return protocol.ExitValidationFailed
+		}
+		fmt.Fprintf(stderr, "build context: %v\n", err)
+		return protocol.ExitInternalError
+	}
+
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "json":
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(packet); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return protocol.ExitInternalError
+		}
+	case "text":
+		fmt.Fprintf(stdout, "level: %s\n", packet.Level)
+		fmt.Fprintf(stdout, "task_id: %s\n", packet.TaskID)
+		fmt.Fprintf(stdout, "title: %s\n", packet.Title)
+		fmt.Fprintf(stdout, "horizon: %s\n", packet.Horizon)
+		fmt.Fprintf(stdout, "source_path: %s\n", packet.SourcePath)
+		fmt.Fprintf(stdout, "source_range: %d-%d\n", packet.StartLine, packet.EndLine)
+		fmt.Fprintf(stdout, "slice_hash: %s\n", packet.SliceHash)
+		fmt.Fprintf(stdout, "slice_text:\n%s\n", packet.SliceText)
+	default:
+		fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
+		return protocol.ExitUsageError
+	}
+
+	return protocol.ExitSuccess
+}
