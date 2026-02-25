@@ -1,0 +1,8 @@
+heading|1|1|Root
+heading|3|2|Alpha
+checkbox|4|0|First checkbox
+checkbox|6|1|Completed checkbox
+heading|8|3|Nested
+checkbox|9|0|Nested unchecked
+heading|11|2|Beta
+checkbox|12|0|Beta checkbox
