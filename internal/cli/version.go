@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/vikramoddiraju/planmark/internal/policy"
 )
 
 const (
@@ -41,6 +43,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch args[0] {
 	case "version":
 		return runVersion(args[1:], stdout, stderr)
+	case "compile":
+		return runCompile(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 2
@@ -68,12 +72,7 @@ func runVersion(args []string, stdout io.Writer, stderr io.Writer) int {
 		Data: versionData{
 			CLIVersion:              CLIVersion,
 			SupportedSchemaVersions: []string{"planmark-v0.2", "ir-v0.2"},
-			SupportedPolicyVersions: []supportedPolicy{
-				{Name: "determinism", Versions: []string{"v0.1"}},
-				{Name: "semantic_derivation", Versions: []string{"v0.1"}},
-				{Name: "change_detection", Versions: []string{"v0.1"}},
-				{Name: "tracker_reconcile", Versions: []string{"v0.1"}},
-			},
+			SupportedPolicyVersions: supportedPoliciesFromRegistry(policy.NewRegistry()),
 		},
 	}
 
@@ -101,4 +100,23 @@ func runVersion(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
 		return 2
 	}
+}
+
+func supportedPoliciesFromRegistry(reg *policy.Registry) []supportedPolicy {
+	supported := reg.SupportedVersions()
+	order := []policy.Kind{
+		policy.KindDeterminism,
+		policy.KindSemanticDerivation,
+		policy.KindChangeDetection,
+		policy.KindTrackerReconcile,
+	}
+	out := make([]supportedPolicy, 0, len(order))
+	for _, kind := range order {
+		versions := append([]string(nil), supported[kind]...)
+		out = append(out, supportedPolicy{
+			Name:     string(kind),
+			Versions: versions,
+		})
+	}
+	return out
 }
