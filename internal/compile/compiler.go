@@ -172,6 +172,9 @@ func firstKnownValue(known map[string][]MetadataEntry, key string) string {
 }
 
 func normalizedLines(content string) []string {
+	if content == "" {
+		return []string{}
+	}
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.ReplaceAll(content, "\r", "\n")
 	return strings.Split(content, "\n")

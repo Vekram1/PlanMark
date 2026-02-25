@@ -147,3 +147,60 @@ func TestCompile(t *testing.T) {
 		t.Fatalf("expected semantic task id fixture.mixed.ir, got %#v", compiled.Semantic.Tasks)
 	}
 }
+
+func TestSourceCoverageNoUnaccountedGaps(t *testing.T) {
+	planPath := filepath.Join("..", "..", "testdata", "plans", "mixed.md")
+	content, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read plan fixture: %v", err)
+	}
+
+	compiled, err := CompileNodes(planPath, content, NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile nodes: %v", err)
+	}
+
+	coverage, err := ComputeSourceCoverage(content, compiled)
+	if err != nil {
+		t.Fatalf("compute source coverage: %v", err)
+	}
+	if coverage.TotalLines <= 0 {
+		t.Fatalf("expected positive total lines, got %d", coverage.TotalLines)
+	}
+	if coverage.Unaccounted != 0 {
+		t.Fatalf("expected no unaccounted lines, got %d", coverage.Unaccounted)
+	}
+	if len(coverage.Interpreted) == 0 {
+		t.Fatalf("expected interpreted ranges in coverage")
+	}
+	if len(coverage.Opaque) == 0 {
+		t.Fatalf("expected opaque ranges in mixed fixture coverage")
+	}
+
+	accounted := 0
+	for _, r := range coverage.Interpreted {
+		accounted += r.EndLine - r.StartLine + 1
+	}
+	for _, r := range coverage.Opaque {
+		accounted += r.EndLine - r.StartLine + 1
+	}
+	if accounted != coverage.TotalLines {
+		t.Fatalf("expected total accounted lines to equal total lines (%d), got %d", coverage.TotalLines, accounted)
+	}
+}
+
+func TestSourceCoverageEmptyContent(t *testing.T) {
+	coverage, err := ComputeSourceCoverage(nil, nil)
+	if err != nil {
+		t.Fatalf("compute source coverage: %v", err)
+	}
+	if coverage.TotalLines != 0 {
+		t.Fatalf("expected zero total lines for empty content, got %d", coverage.TotalLines)
+	}
+	if coverage.Unaccounted != 0 {
+		t.Fatalf("expected zero unaccounted lines for empty content, got %d", coverage.Unaccounted)
+	}
+	if len(coverage.Interpreted) != 0 || len(coverage.Opaque) != 0 {
+		t.Fatalf("expected no coverage ranges for empty content, got interpreted=%v opaque=%v", coverage.Interpreted, coverage.Opaque)
+	}
+}
