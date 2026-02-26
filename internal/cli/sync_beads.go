@@ -8,22 +8,30 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/compile"
 	"github.com/vikramoddiraju/planmark/internal/protocol"
+	"github.com/vikramoddiraju/planmark/internal/syncplanner"
 	"github.com/vikramoddiraju/planmark/internal/tracker"
 )
 
 type syncBeadsResult struct {
-	Target       string `json:"target"`
-	PlanPath     string `json:"plan_path"`
-	StateDir     string `json:"state_dir,omitempty"`
-	DryRun       bool   `json:"dry_run"`
-	TasksSeen    int    `json:"tasks_seen"`
-	TasksMutated int    `json:"tasks_mutated"`
-	DriftCount   int    `json:"drift_count"`
-	ManifestPath string `json:"manifest_path,omitempty"`
+	Target         string `json:"target"`
+	PlanPath       string `json:"plan_path"`
+	StateDir       string `json:"state_dir,omitempty"`
+	DryRun         bool   `json:"dry_run"`
+	DeletionPolicy string `json:"deletion_policy"`
+	TasksSeen      int    `json:"tasks_seen"`
+	TasksMutated   int    `json:"tasks_mutated"`
+	DriftCount     int    `json:"drift_count"`
+	ManifestPath   string `json:"manifest_path,omitempty"`
+	CreateCount    int    `json:"create_count"`
+	UpdateCount    int    `json:"update_count"`
+	NoopCount      int    `json:"noop_count"`
+	MarkStaleCount int    `json:"mark_stale_count"`
+	ConflictCount  int    `json:"conflict_count"`
 }
 
 func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -35,7 +43,11 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			filteredArgs = append(filteredArgs, arg)
 			continue
 		}
-		if arg == "--plan" || arg == "--state-dir" || arg == "--format" {
+		if strings.HasPrefix(arg, "--deletion-policy=") {
+			filteredArgs = append(filteredArgs, arg)
+			continue
+		}
+		if arg == "--plan" || arg == "--state-dir" || arg == "--format" || arg == "--deletion-policy" {
 			filteredArgs = append(filteredArgs, arg)
 			if i+1 < len(args) {
 				i++
@@ -62,6 +74,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "", "path to PLAN markdown file")
 	stateDir := fs.String("state-dir", ".planmark", "path to planmark local state directory")
+	deletionPolicy := fs.String("deletion-policy", string(syncplanner.DefaultDeletionPolicy()), "deletion policy for PLAN removals: mark-stale|close|detach|delete")
 	dryRun := fs.Bool("dry-run", false, "preview without writing sync manifest")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(filteredArgs); err != nil {
@@ -74,7 +87,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	remaining := fs.Args()
 	if len(remaining) > 1 {
-		fmt.Fprintln(stderr, "usage: plan sync beads --plan <path> [--state-dir <path>] [--dry-run] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan sync beads --plan <path> [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
 		return protocol.ExitUsageError
 	}
 	if len(remaining) == 1 {
@@ -85,11 +98,16 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		target = remaining[0]
 	}
 	if strings.TrimSpace(target) != "beads" {
-		fmt.Fprintln(stderr, "usage: plan sync beads --plan <path> [--state-dir <path>] [--dry-run] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan sync beads --plan <path> [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
 		return protocol.ExitUsageError
 	}
 	if strings.TrimSpace(*planPath) == "" {
 		fmt.Fprintln(stderr, "missing --plan")
+		return protocol.ExitUsageError
+	}
+	resolvedDeletionPolicy, err := syncplanner.ParseDeletionPolicy(*deletionPolicy)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
 		return protocol.ExitUsageError
 	}
 
@@ -126,12 +144,23 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	if resolvedStateDir == "" {
 		resolvedStateDir = ".planmark"
 	}
-	result := syncBeadsResult{
-		Target:   "beads",
-		PlanPath: *planPath,
-		StateDir: resolvedStateDir,
-		DryRun:   *dryRun,
+	priorManifest, err := loadBeadsManifest(filepath.Join(resolvedStateDir, "sync", "beads-manifest.json"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load sync manifest: %v\n", err)
+		return protocol.ExitInternalError
 	}
+
+	result := syncBeadsResult{
+		Target:         "beads",
+		PlanPath:       *planPath,
+		StateDir:       resolvedStateDir,
+		DryRun:         *dryRun,
+		DeletionPolicy: string(resolvedDeletionPolicy),
+	}
+	taskProjectionByID := make(map[string]tracker.TaskProjection, len(compiled.Semantic.Tasks))
+	desired := make([]syncplanner.DesiredProjection, 0, len(compiled.Semantic.Tasks))
+	prior := make([]syncplanner.PriorProjection, 0, len(priorManifest.Entries))
+
 	ctx := context.Background()
 	for _, task := range compiled.Semantic.Tasks {
 		node, ok := nodesByRef[task.NodeRef]
@@ -139,7 +168,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "missing source node for task id %q (node_ref=%s)\n", task.ID, task.NodeRef)
 			return protocol.ExitInternalError
 		}
-		pushResult, err := adapter.PushTask(ctx, tracker.TaskProjection{
+		projection := tracker.TaskProjection{
 			ID:              task.ID,
 			Title:           task.Title,
 			SourcePath:      compiled.PlanPath,
@@ -147,12 +176,53 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			SourceEndLine:   node.endLine,
 			SourceHash:      node.sliceHash,
 			Accept:          append([]string(nil), task.Accept...),
-		})
+		}
+		hash, err := syncplanner.ProjectionHashForTask(projection)
+		if err != nil {
+			fmt.Fprintf(stderr, "hash task projection: %v\n", err)
+			return protocol.ExitInternalError
+		}
+		taskProjectionByID[task.ID] = projection
+		desired = append(desired, syncplanner.DesiredProjection{ID: task.ID, ProjectionHash: hash})
+		result.TasksSeen++
+	}
+
+	for _, entry := range priorManifest.Entries {
+		prior = append(prior, syncplanner.PriorProjection{ID: entry.ID, ProjectionHash: entry.ProjectionHash})
+	}
+
+	ops := syncplanner.PlanSyncOps(desired, prior, resolvedDeletionPolicy)
+	for _, op := range ops {
+		switch op.Kind {
+		case syncplanner.OperationCreate:
+			result.CreateCount++
+		case syncplanner.OperationUpdate:
+			result.UpdateCount++
+		case syncplanner.OperationNoop:
+			result.NoopCount++
+		case syncplanner.OperationMarkStale:
+			result.MarkStaleCount++
+		case syncplanner.OperationConflict:
+			result.ConflictCount++
+		}
+	}
+
+	for _, op := range ops {
+		if *dryRun {
+			continue
+		}
+		if op.Kind != syncplanner.OperationCreate && op.Kind != syncplanner.OperationUpdate {
+			continue
+		}
+		taskProjection, ok := taskProjectionByID[op.ID]
+		if !ok {
+			continue
+		}
+		pushResult, err := adapter.PushTask(ctx, taskProjection)
 		if err != nil {
 			fmt.Fprintf(stderr, "push task projection: %v\n", err)
 			return protocol.ExitInternalError
 		}
-		result.TasksSeen++
 		if pushResult.Mutated {
 			result.TasksMutated++
 		}
@@ -175,9 +245,15 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "target: %s\n", result.Target)
 		fmt.Fprintf(stdout, "plan_path: %s\n", result.PlanPath)
 		fmt.Fprintf(stdout, "dry_run: %t\n", result.DryRun)
+		fmt.Fprintf(stdout, "deletion_policy: %s\n", result.DeletionPolicy)
 		fmt.Fprintf(stdout, "tasks_seen: %d\n", result.TasksSeen)
 		fmt.Fprintf(stdout, "tasks_mutated: %d\n", result.TasksMutated)
 		fmt.Fprintf(stdout, "drift_count: %d\n", result.DriftCount)
+		fmt.Fprintf(stdout, "create_count: %d\n", result.CreateCount)
+		fmt.Fprintf(stdout, "update_count: %d\n", result.UpdateCount)
+		fmt.Fprintf(stdout, "noop_count: %d\n", result.NoopCount)
+		fmt.Fprintf(stdout, "mark_stale_count: %d\n", result.MarkStaleCount)
+		fmt.Fprintf(stdout, "conflict_count: %d\n", result.ConflictCount)
 		if result.ManifestPath != "" {
 			fmt.Fprintf(stdout, "manifest_path: %s\n", result.ManifestPath)
 		}
@@ -201,4 +277,26 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	return protocol.ExitSuccess
+}
+
+func loadBeadsManifest(path string) (tracker.BeadsSyncManifest, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return tracker.BeadsSyncManifest{
+				SchemaVersion: tracker.BeadsManifestSchemaVersionV01,
+				Entries:       nil,
+			}, nil
+		}
+		return tracker.BeadsSyncManifest{}, err
+	}
+
+	var manifest tracker.BeadsSyncManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return tracker.BeadsSyncManifest{}, fmt.Errorf("decode manifest: %w", err)
+	}
+	if strings.TrimSpace(manifest.SchemaVersion) == "" {
+		return tracker.BeadsSyncManifest{}, fmt.Errorf("decode manifest: missing schema_version")
+	}
+	return manifest, nil
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,5 +95,62 @@ func TestSyncBeadsAcceptsTargetBeforeFlags(t *testing.T) {
 	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("expected manifest at %q: %v", manifestPath, err)
+	}
+}
+
+func TestSyncBeadsDefaultDeletionPolicyMarkStale(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync default policy",
+		"  @id fixture.task.sync.default_policy",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload struct {
+		Data struct {
+			DeletionPolicy string `json:"deletion_policy"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json output: %v", err)
+	}
+	if payload.Data.DeletionPolicy != "mark-stale" {
+		t.Fatalf("expected default deletion policy mark-stale, got %q", payload.Data.DeletionPolicy)
+	}
+}
+
+func TestSyncBeadsRejectsInvalidDeletionPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync invalid policy",
+		"  @id fixture.task.sync.invalid_policy",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--deletion-policy", "archive"}, &out, &errOut)
+	if exit != 2 {
+		t.Fatalf("expected usage exit code 2, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "invalid deletion policy") {
+		t.Fatalf("expected invalid policy message, got %q", errOut.String())
 	}
 }

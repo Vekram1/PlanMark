@@ -336,3 +336,42 @@ func TestL1PinRejectsReversedRange(t *testing.T) {
 		t.Fatalf("expected invalid range error, got %v", err)
 	}
 }
+
+func TestBuildL0CachedMissThenHit(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, ".planmark")
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packetA, hitA, err := BuildL0Cached(compiled, "fixture.task.now", stateDir)
+	if err != nil {
+		t.Fatalf("build L0 cached (first): %v", err)
+	}
+	if hitA {
+		t.Fatalf("expected first cached build to miss")
+	}
+
+	packetB, hitB, err := BuildL0Cached(compiled, "fixture.task.now", stateDir)
+	if err != nil {
+		t.Fatalf("build L0 cached (second): %v", err)
+	}
+	if !hitB {
+		t.Fatalf("expected second cached build to hit")
+	}
+	if packetA.SliceHash != packetB.SliceHash {
+		t.Fatalf("expected cached packet to match initial packet slice hash")
+	}
+}

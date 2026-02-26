@@ -1,10 +1,13 @@
 package context
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/vikramoddiraju/planmark/internal/cache"
 	"github.com/vikramoddiraju/planmark/internal/ir"
 )
 
@@ -66,6 +69,101 @@ func BuildL1(plan ir.PlanIR, taskID string) (L1Packet, error) {
 		L0Packet: base,
 		Pins:     pins,
 	}, nil
+}
+
+func BuildL0Cached(plan ir.PlanIR, taskID string, stateDir string) (L0Packet, bool, error) {
+	task, node, err := resolveTaskAndNode(plan, taskID)
+	if err != nil {
+		return L0Packet{}, false, err
+	}
+	key := cache.ContextPacketKey(cache.ContextKeyInput{
+		Level:                           "L0",
+		PlanPath:                        plan.PlanPath,
+		IRVersion:                       plan.IRVersion,
+		DeterminismPolicyVersion:        plan.DeterminismPolicyVersion,
+		SemanticDerivationPolicyVersion: plan.SemanticDerivationPolicyVersion,
+		TaskID:                          task.ID,
+		TaskNodeRef:                     task.NodeRef,
+		TaskSemanticFingerprint:         task.SemanticFingerprint,
+		NodeSliceHash:                   node.SliceHash,
+	})
+	if strings.TrimSpace(stateDir) != "" {
+		if payload, err := cache.ReadContextPacket(stateDir, key); err == nil {
+			var packet L0Packet
+			if err := json.Unmarshal(payload, &packet); err == nil {
+				return packet, true, nil
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return L0Packet{}, false, err
+		}
+	}
+
+	packet := buildL0Packet(plan, task, node)
+	if strings.TrimSpace(stateDir) != "" {
+		payload, err := json.Marshal(packet)
+		if err != nil {
+			return L0Packet{}, false, fmt.Errorf("marshal L0 packet: %w", err)
+		}
+		if _, err := cache.WriteContextPacket(stateDir, key, payload); err != nil {
+			return L0Packet{}, false, err
+		}
+	}
+	return packet, false, nil
+}
+
+func BuildL1Cached(plan ir.PlanIR, taskID string, stateDir string) (L1Packet, bool, error) {
+	task, node, err := resolveTaskAndNode(plan, taskID)
+	if err != nil {
+		return L1Packet{}, false, err
+	}
+	pins, err := extractPinTargets(plan, node)
+	if err != nil {
+		return L1Packet{}, false, err
+	}
+
+	pinTargetHashes := make([]string, 0, len(pins))
+	for _, pin := range pins {
+		pinTargetHashes = append(pinTargetHashes, pin.TargetHash)
+	}
+	key := cache.ContextPacketKey(cache.ContextKeyInput{
+		Level:                           "L1",
+		PlanPath:                        plan.PlanPath,
+		IRVersion:                       plan.IRVersion,
+		DeterminismPolicyVersion:        plan.DeterminismPolicyVersion,
+		SemanticDerivationPolicyVersion: plan.SemanticDerivationPolicyVersion,
+		TaskID:                          task.ID,
+		TaskNodeRef:                     task.NodeRef,
+		TaskSemanticFingerprint:         task.SemanticFingerprint,
+		NodeSliceHash:                   node.SliceHash,
+		PinTargetHashes:                 pinTargetHashes,
+	})
+	if strings.TrimSpace(stateDir) != "" {
+		if payload, err := cache.ReadContextPacket(stateDir, key); err == nil {
+			var packet L1Packet
+			if err := json.Unmarshal(payload, &packet); err == nil {
+				return packet, true, nil
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return L1Packet{}, false, err
+		}
+	}
+
+	base := buildL0Packet(plan, task, node)
+	base.Level = "L1"
+	packet := L1Packet{
+		L0Packet: base,
+		Pins:     pins,
+	}
+	if strings.TrimSpace(stateDir) != "" {
+		payload, err := json.Marshal(packet)
+		if err != nil {
+			return L1Packet{}, false, fmt.Errorf("marshal L1 packet: %w", err)
+		}
+		if _, err := cache.WriteContextPacket(stateDir, key, payload); err != nil {
+			return L1Packet{}, false, err
+		}
+	}
+	return packet, false, nil
 }
 
 func resolveTaskAndNode(plan ir.PlanIR, taskID string) (ir.Task, ir.SourceNode, error) {
