@@ -51,6 +51,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runContext(args[1:], stdout, stderr)
 	case "open":
 		return runOpen(args[1:], stdout, stderr)
+	case "handoff":
+		return runHandoff(args[1:], stdout, stderr)
 	case "explain":
 		return runExplain(args[1:], stdout, stderr)
 	case "sync":
