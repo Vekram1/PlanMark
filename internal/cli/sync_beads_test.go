@@ -258,6 +258,42 @@ func TestSyncBeadsRejectsInvalidDeletionPolicy(t *testing.T) {
 	}
 }
 
+func TestSyncBeadsDeletionPolicyFlagParsing(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync parse policy",
+		"  @id fixture.task.sync.parse_policy",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	for _, policy := range []string{"mark-stale", "close", "detach", "delete"} {
+		t.Run(policy, func(t *testing.T) {
+			var out bytes.Buffer
+			var errOut bytes.Buffer
+			exit := Run([]string{"sync", "beads", "--plan", planPath, "--deletion-policy", policy, "--format", "json"}, &out, &errOut)
+			if exit != 0 {
+				t.Fatalf("expected exit 0 for policy %q, got %d stderr=%q", policy, exit, errOut.String())
+			}
+			var payload struct {
+				Data struct {
+					DeletionPolicy string `json:"deletion_policy"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+				t.Fatalf("decode json output: %v output=%q", err, out.String())
+			}
+			if payload.Data.DeletionPolicy != policy {
+				t.Fatalf("expected deletion policy %q in output, got %q", policy, payload.Data.DeletionPolicy)
+			}
+		})
+	}
+}
+
 func TestSyncBeadsPreservesNoopEntriesAcrossRuns(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
