@@ -58,6 +58,50 @@ func TestChangesCLIJSONOutputStable(t *testing.T) {
 	}
 }
 
+func TestE2EChangeDetectionAfterFixtureEdit(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, ".planmark")
+	planPath := filepath.Join(tmp, "mixed.md")
+
+	fixturePath := filepath.Join("..", "..", "testdata", "plans", "mixed.md")
+	original, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if err := os.WriteFile(planPath, original, 0o644); err != nil {
+		t.Fatalf("write temp fixture: %v", err)
+	}
+
+	baseline := runChangesJSON(t, []string{"changes", "--plan", planPath, "--state-dir", stateDir, "--format", "json"})
+	baselineCompileID := jsonPathString(t, baseline, "data", "current_compile_id")
+	if baselineCompileID == "" {
+		t.Fatalf("expected baseline compile id")
+	}
+
+	edited := strings.Replace(string(original), "Build IR from mixed content", "Build IR from updated mixed content", 1)
+	if edited == string(original) {
+		t.Fatalf("fixture edit did not change content")
+	}
+	if err := os.WriteFile(planPath, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write edited fixture: %v", err)
+	}
+
+	args := []string{"changes", "--plan", planPath, "--state-dir", stateDir, "--since", baselineCompileID, "--format", "json"}
+	outA := runChangesJSON(t, args)
+	outB := runChangesJSON(t, args)
+	if !reflect.DeepEqual(outA, outB) {
+		t.Fatalf("expected deterministic changes output after fixture edit")
+	}
+
+	rawChanges, ok := jsonPath(outA, "data", "changes").([]interface{})
+	if !ok {
+		t.Fatalf("expected changes array in output")
+	}
+	if len(rawChanges) == 0 {
+		t.Fatalf("expected at least one task-level change classification after fixture edit")
+	}
+}
+
 func TestChangesCLIRequiresMatchingSinceCompileID(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, ".planmark")

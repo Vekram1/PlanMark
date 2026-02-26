@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/cache"
+	"github.com/vikramoddiraju/planmark/internal/fsio"
 	"github.com/vikramoddiraju/planmark/internal/ir"
 )
 
@@ -32,12 +34,15 @@ type L0Packet struct {
 }
 
 type PinExtract struct {
-	Key        string `json:"key"`
-	TargetPath string `json:"target_path"`
-	StartLine  int    `json:"start_line"`
-	EndLine    int    `json:"end_line"`
-	TargetHash string `json:"target_hash"`
-	SliceText  string `json:"slice_text"`
+	Key         string `json:"key"`
+	TargetPath  string `json:"target_path"`
+	StartLine   int    `json:"start_line"`
+	EndLine     int    `json:"end_line"`
+	TargetHash  string `json:"target_hash"`
+	Freshness   string `json:"freshness"`
+	Baseline    string `json:"baseline_target_hash,omitempty"`
+	SliceText   string `json:"slice_text"`
+	identityEnd int    `json:"-"`
 }
 
 type L1Packet struct {
@@ -120,6 +125,24 @@ func BuildL1Cached(plan ir.PlanIR, taskID string, stateDir string) (L1Packet, bo
 	if err != nil {
 		return L1Packet{}, false, err
 	}
+	baseKey := cache.ContextPacketKey(cache.ContextKeyInput{
+		Level:                           "L1",
+		PlanPath:                        plan.PlanPath,
+		IRVersion:                       plan.IRVersion,
+		DeterminismPolicyVersion:        plan.DeterminismPolicyVersion,
+		SemanticDerivationPolicyVersion: plan.SemanticDerivationPolicyVersion,
+		TaskID:                          task.ID,
+		TaskNodeRef:                     task.NodeRef,
+		TaskSemanticFingerprint:         task.SemanticFingerprint,
+		NodeSliceHash:                   node.SliceHash,
+	})
+	if strings.TrimSpace(stateDir) != "" {
+		annotatedPins, err := applyPinFreshnessBaseline(stateDir, baseKey, pins)
+		if err != nil {
+			return L1Packet{}, false, err
+		}
+		pins = annotatedPins
+	}
 
 	pinTargetHashes := make([]string, 0, len(pins))
 	for _, pin := range pins {
@@ -164,6 +187,68 @@ func BuildL1Cached(plan ir.PlanIR, taskID string, stateDir string) (L1Packet, bo
 		}
 	}
 	return packet, false, nil
+}
+
+type pinFreshnessBaseline struct {
+	Pins map[string]string `json:"pins"`
+}
+
+func applyPinFreshnessBaseline(stateDir string, baseKey string, pins []PinExtract) ([]PinExtract, error) {
+	baselinePath := filepath.Join(stateDir, "cache", "context", "l1-freshness", baseKey+".json")
+	payload, err := os.ReadFile(baselinePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			for i := range pins {
+				pins[i].Freshness = "fresh"
+			}
+			if writeErr := writePinFreshnessBaseline(baselinePath, pins); writeErr != nil {
+				return nil, writeErr
+			}
+			return pins, nil
+		}
+		return nil, fmt.Errorf("read pin freshness baseline: %w", err)
+	}
+
+	var baseline pinFreshnessBaseline
+	if err := json.Unmarshal(payload, &baseline); err != nil {
+		return nil, fmt.Errorf("decode pin freshness baseline: %w", err)
+	}
+
+	for i := range pins {
+		id := pinIdentity(pins[i])
+		previousHash, ok := baseline.Pins[id]
+		if !ok {
+			pins[i].Freshness = "unknown"
+			continue
+		}
+		if previousHash != pins[i].TargetHash {
+			pins[i].Freshness = "stale"
+			pins[i].Baseline = previousHash
+			continue
+		}
+		pins[i].Freshness = "fresh"
+	}
+	return pins, nil
+}
+
+func writePinFreshnessBaseline(path string, pins []PinExtract) error {
+	baseline := pinFreshnessBaseline{Pins: map[string]string{}}
+	for _, pin := range pins {
+		baseline.Pins[pinIdentity(pin)] = pin.TargetHash
+	}
+	payload, err := json.MarshalIndent(baseline, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal pin freshness baseline: %w", err)
+	}
+	payload = append(payload, '\n')
+	if err := fsio.WriteFileAtomic(path, payload, 0o644); err != nil {
+		return fmt.Errorf("write pin freshness baseline: %w", err)
+	}
+	return nil
+}
+
+func pinIdentity(pin PinExtract) string {
+	return fmt.Sprintf("%s|%s|%d|%d", pin.Key, pin.TargetPath, pin.StartLine, pin.identityEnd)
 }
 
 func resolveTaskAndNode(plan ir.PlanIR, taskID string) (ir.Task, ir.SourceNode, error) {

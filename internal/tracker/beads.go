@@ -5,16 +5,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/vikramoddiraju/planmark/internal/cache"
 	"github.com/vikramoddiraju/planmark/internal/fsio"
 )
 
 const ProjectionSchemaVersionV01 = "v0.1"
 const BeadsManifestSchemaVersionV01 = "v0.1"
+
+var ErrTransientSync = errors.New("transient tracker sync error")
+var ErrRateLimitedSync = errors.New("tracker rate limited")
 
 type SourceRange struct {
 	Path      string `json:"path"`
@@ -38,6 +43,7 @@ type BeadsAdapter struct {
 	remoteIDByID       map[string]string
 	runtimeByID        map[string]RuntimeFields
 	lastSeenRuntime    map[string]string
+	pushFailuresByID   map[string][]error
 }
 
 type BeadsManifestEntry struct {
@@ -60,6 +66,7 @@ func NewBeadsAdapter() *BeadsAdapter {
 		remoteIDByID:       map[string]string{},
 		runtimeByID:        map[string]RuntimeFields{},
 		lastSeenRuntime:    map[string]string{},
+		pushFailuresByID:   map[string][]error{},
 	}
 }
 
@@ -115,6 +122,16 @@ func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error)
 }
 
 func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushResult, error) {
+	if queued := a.pushFailuresByID[task.ID]; len(queued) > 0 {
+		err := queued[0]
+		if len(queued) == 1 {
+			delete(a.pushFailuresByID, task.ID)
+		} else {
+			a.pushFailuresByID[task.ID] = queued[1:]
+		}
+		return PushResult{}, err
+	}
+
 	payload, err := BuildProjectionPayload(task)
 	if err != nil {
 		return PushResult{}, err
@@ -199,6 +216,28 @@ func (a *BeadsAdapter) SetRemoteRuntimeFields(id string, fields RuntimeFields) {
 	a.runtimeByID[id] = fields
 }
 
+func (a *BeadsAdapter) SetPushFailures(id string, failures []error) {
+	if len(failures) == 0 {
+		delete(a.pushFailuresByID, id)
+		return
+	}
+	copied := make([]error, len(failures))
+	copy(copied, failures)
+	a.pushFailuresByID[id] = copied
+}
+
+func IsTransientSyncError(err error) bool {
+	return errors.Is(err, ErrTransientSync)
+}
+
+func IsRateLimitedSyncError(err error) bool {
+	return errors.Is(err, ErrRateLimitedSync)
+}
+
+func IsRetryableSyncError(err error) bool {
+	return IsTransientSyncError(err) || IsRateLimitedSyncError(err)
+}
+
 func (a *BeadsAdapter) BuildSyncManifest() BeadsSyncManifest {
 	idsSet := map[string]struct{}{}
 	for id := range a.projectionHashByID {
@@ -242,6 +281,14 @@ func (a *BeadsAdapter) WriteSyncManifest(stateDir string) (string, error) {
 	if resolvedStateDir == "" {
 		resolvedStateDir = ".planmark"
 	}
+	lock, err := cache.AcquireLock(resolvedStateDir, "sync-beads-manifest")
+	if err != nil {
+		return "", fmt.Errorf("acquire sync manifest lock: %w", err)
+	}
+	defer func() {
+		_ = lock.Release()
+	}()
+
 	manifestPath := filepath.Join(resolvedStateDir, "sync", "beads-manifest.json")
 	manifest := a.BuildSyncManifest()
 
@@ -254,6 +301,10 @@ func (a *BeadsAdapter) WriteSyncManifest(stateDir string) (string, error) {
 	if err := fsio.WriteFileAtomic(manifestPath, data, 0o644); err != nil {
 		return "", fmt.Errorf("write sync manifest: %w", err)
 	}
+	if err := lock.Release(); err != nil {
+		return "", fmt.Errorf("release sync manifest lock: %w", err)
+	}
+	lock = nil
 	return manifestPath, nil
 }
 

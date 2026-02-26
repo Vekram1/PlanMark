@@ -75,6 +75,7 @@ func buildPinExtract(repoRoot string, key string, ref string) (PinExtract, error
 	if err != nil {
 		return PinExtract{}, fmt.Errorf("parse @%s target %q: %w", key, ref, err)
 	}
+	identityEnd := endLine
 
 	cleanPath, absPath, err := resolveRepoScopedPath(repoRoot, targetPath)
 	if err != nil {
@@ -108,12 +109,14 @@ func buildPinExtract(repoRoot string, key string, ref string) (PinExtract, error
 	slice := strings.Join(lines[startLine-1:endLine], "\n")
 	sum := sha256.Sum256([]byte(slice))
 	return PinExtract{
-		Key:        key,
-		TargetPath: filepath.ToSlash(cleanPath),
-		StartLine:  startLine,
-		EndLine:    endLine,
-		TargetHash: hex.EncodeToString(sum[:]),
-		SliceText:  slice,
+		Key:         key,
+		TargetPath:  filepath.ToSlash(cleanPath),
+		StartLine:   startLine,
+		EndLine:     endLine,
+		TargetHash:  hex.EncodeToString(sum[:]),
+		Freshness:   "fresh",
+		SliceText:   slice,
+		identityEnd: identityEnd,
 	}, nil
 }
 

@@ -3,6 +3,7 @@ package context
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -146,6 +147,84 @@ func TestL1IncludesPinExtracts(t *testing.T) {
 	}
 	if strings.TrimSpace(second.SliceText) != "func Parse() {}" {
 		t.Fatalf("expected pin slice text for line 3, got %q", second.SliceText)
+	}
+	if second.Freshness != "fresh" {
+		t.Fatalf("expected fresh pin status, got %q", second.Freshness)
+	}
+}
+
+func TestL1PinFreshnessDetectsTargetHashChange(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, ".planmark")
+	targetPath := filepath.Join(tmp, "internal", "compile", "parser.go")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("package compile\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  @pin internal/compile/parser.go",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packetA, _, err := BuildL1Cached(compiled, "fixture.task.now", stateDir)
+	if err != nil {
+		t.Fatalf("build initial L1 cached: %v", err)
+	}
+	if len(packetA.Pins) != 1 {
+		t.Fatalf("expected 1 pin, got %d", len(packetA.Pins))
+	}
+	initialHash := packetA.Pins[0].TargetHash
+	if packetA.Pins[0].Freshness != "fresh" {
+		t.Fatalf("expected initial freshness=fresh, got %q", packetA.Pins[0].Freshness)
+	}
+
+	if err := os.WriteFile(targetPath, []byte("package compile\n// changed\n"), 0o644); err != nil {
+		t.Fatalf("update target file: %v", err)
+	}
+
+	packetB, _, err := BuildL1Cached(compiled, "fixture.task.now", stateDir)
+	if err != nil {
+		t.Fatalf("build stale L1 cached: %v", err)
+	}
+	if len(packetB.Pins) != 1 {
+		t.Fatalf("expected 1 pin, got %d", len(packetB.Pins))
+	}
+	pin := packetB.Pins[0]
+	if pin.Freshness != "stale" {
+		t.Fatalf("expected stale freshness, got %q", pin.Freshness)
+	}
+	if pin.Baseline != initialHash {
+		t.Fatalf("expected baseline hash %q, got %q", initialHash, pin.Baseline)
+	}
+
+	raw, err := json.Marshal(packetB)
+	if err != nil {
+		t.Fatalf("marshal stale packet: %v", err)
+	}
+	if !strings.Contains(string(raw), "\"freshness\":\"stale\"") {
+		t.Fatalf("expected JSON freshness status, got %s", string(raw))
+	}
+}
+
+func TestPinFreshnessIdentityDistinguishesRangeForms(t *testing.T) {
+	a := PinExtract{Key: "pin", TargetPath: "internal/compile/parser.go", StartLine: 1, identityEnd: 0}
+	b := PinExtract{Key: "pin", TargetPath: "internal/compile/parser.go", StartLine: 1, identityEnd: 1}
+	if pinIdentity(a) == pinIdentity(b) {
+		t.Fatalf("expected distinct pin freshness identities for implicit vs explicit ranges")
 	}
 }
 

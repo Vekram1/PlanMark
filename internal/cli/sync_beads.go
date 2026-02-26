@@ -42,6 +42,16 @@ type syncPreviewOperation struct {
 	Reason string `json:"reason"`
 }
 
+type beadsSyncAdapter interface {
+	SeedFromSyncManifest(manifest tracker.BeadsSyncManifest)
+	PushTask(ctx context.Context, task tracker.TaskProjection) (tracker.PushResult, error)
+	WriteSyncManifest(stateDir string) (string, error)
+}
+
+var newBeadsSyncAdapter = func() beadsSyncAdapter {
+	return tracker.NewBeadsAdapter()
+}
+
 func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	target := ""
 	filteredArgs := make([]string, 0, len(args))
@@ -147,7 +157,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 	}
 
-	adapter := tracker.NewBeadsAdapter()
+	adapter := newBeadsSyncAdapter()
 	resolvedStateDir := strings.TrimSpace(*stateDir)
 	if resolvedStateDir == "" {
 		resolvedStateDir = ".planmark"
@@ -280,28 +290,45 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 			continue
 		}
-		pushResult, err := adapter.PushTask(ctx, taskProjection)
-		if err != nil {
-			_ = journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+		var pushResult tracker.PushResult
+		var pushErr error
+		for attempt := 1; ; attempt++ {
+			pushResult, pushErr = adapter.PushTask(ctx, taskProjection)
+			if pushErr == nil {
+				if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+					OperationID: opID,
+					Kind:        string(op.Kind),
+					ID:          op.ID,
+					Attempt:     attempt,
+					Outcome:     journal.OutcomeSuccess,
+				}); err != nil {
+					fmt.Fprintf(stderr, "append sync journal success record: %v\n", err)
+					return protocol.ExitInternalError
+				}
+				break
+			}
+
+			retryable := tracker.IsRetryableSyncError(pushErr)
+			maxAttempts := retryMaxAttempts(pushErr)
+			errDetail := pushErr.Error()
+			if retryable && attempt < maxAttempts {
+				errDetail = fmt.Sprintf("%s (retry scheduled: backoff_ms=%d)", errDetail, retryBackoffMillis(pushErr, attempt))
+			}
+			if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
 				OperationID: opID,
 				Kind:        string(op.Kind),
 				ID:          op.ID,
-				Attempt:     1,
+				Attempt:     attempt,
 				Outcome:     journal.OutcomeFailed,
-				Error:       err.Error(),
-			})
-			fmt.Fprintf(stderr, "push task projection: %v\n", err)
-			return protocol.ExitInternalError
-		}
-		if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
-			OperationID: opID,
-			Kind:        string(op.Kind),
-			ID:          op.ID,
-			Attempt:     1,
-			Outcome:     journal.OutcomeSuccess,
-		}); err != nil {
-			fmt.Fprintf(stderr, "append sync journal success record: %v\n", err)
-			return protocol.ExitInternalError
+				Error:       errDetail,
+			}); err != nil {
+				fmt.Fprintf(stderr, "append sync journal failure record: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			if !retryable || attempt >= maxAttempts {
+				fmt.Fprintf(stderr, "push task projection: %v\n", pushErr)
+				return protocol.ExitInternalError
+			}
 		}
 		if pushResult.Mutated {
 			result.TasksMutated++
@@ -385,4 +412,25 @@ func loadBeadsManifest(path string) (tracker.BeadsSyncManifest, error) {
 		return tracker.BeadsSyncManifest{}, fmt.Errorf("decode manifest: missing schema_version")
 	}
 	return manifest, nil
+}
+
+func retryMaxAttempts(err error) int {
+	if tracker.IsRateLimitedSyncError(err) {
+		return 4
+	}
+	if tracker.IsTransientSyncError(err) {
+		return 3
+	}
+	return 1
+}
+
+func retryBackoffMillis(err error, attempt int) int {
+	base := 100
+	if tracker.IsRateLimitedSyncError(err) {
+		base = 250
+	}
+	if attempt <= 0 {
+		attempt = 1
+	}
+	return base * attempt
 }

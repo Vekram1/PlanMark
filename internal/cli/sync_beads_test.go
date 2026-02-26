@@ -3,10 +3,15 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vikramoddiraju/planmark/internal/journal"
+	"github.com/vikramoddiraju/planmark/internal/tracker"
 )
 
 func TestSyncBeadsUsageRequiresTarget(t *testing.T) {
@@ -172,6 +177,51 @@ func TestSyncBeadsJSONOmitsPlannedOpsWithoutDryRun(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "\"planned_ops\"") {
 		t.Fatalf("expected planned_ops to be omitted without --dry-run, got %q", out.String())
+	}
+}
+
+func TestSyncBeadsCLIJSONOutputStable(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync stable json",
+		"  @id fixture.task.sync.json_stable",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	run := func() map[string]any {
+		var out bytes.Buffer
+		var errOut bytes.Buffer
+		exit := Run([]string{"sync", "beads", "--dry-run", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+		if exit != 0 {
+			t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+			t.Fatalf("decode json output: %v output=%q", err, out.String())
+		}
+		return payload
+	}
+
+	first := run()
+	second := run()
+
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("expected stable sync json output across identical runs\nfirst=%v\nsecond=%v", first, second)
+	}
+	if first["schema_version"] != "v0.1" {
+		t.Fatalf("expected schema_version v0.1, got %v", first["schema_version"])
+	}
+	if first["command"] != "sync beads" {
+		t.Fatalf("expected command sync beads, got %v", first["command"])
+	}
+	if first["status"] != "ok" {
+		t.Fatalf("expected status ok, got %v", first["status"])
 	}
 }
 
@@ -353,5 +403,111 @@ func TestSyncBeadsPreservesNoopEntriesAcrossRuns(t *testing.T) {
 	}
 	if len(manifest.Entries) != 1 || manifest.Entries[0].ID != "fixture.task.sync.stable" {
 		t.Fatalf("expected manifest to preserve existing noop entry, got %s", string(raw))
+	}
+}
+
+func TestBeadsSyncRetryTransientFailure(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync retry transient",
+		"  @id fixture.task.sync.retry.transient",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	restore := newBeadsSyncAdapter
+	adapter := tracker.NewBeadsAdapter()
+	adapter.SetPushFailures("fixture.task.sync.retry.transient", []error{
+		fmt.Errorf("%w: temporary gateway timeout", tracker.ErrTransientSync),
+	})
+	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
+	defer func() { newBeadsSyncAdapter = restore }()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0 after transient retry, got %d stderr=%q", exit, errOut.String())
+	}
+
+	j, err := journal.Load(stateDir)
+	if err != nil {
+		t.Fatalf("load sync journal: %v", err)
+	}
+	failed := 0
+	success := 0
+	for _, a := range j.Attempts {
+		if a.ID != "fixture.task.sync.retry.transient" {
+			continue
+		}
+		if a.Outcome == journal.OutcomeFailed {
+			failed++
+		}
+		if a.Outcome == journal.OutcomeSuccess {
+			success++
+		}
+	}
+	if failed < 1 || success < 1 {
+		t.Fatalf("expected retry journal history with failed then success attempts, got %#v", j.Attempts)
+	}
+}
+
+func TestBeadsSyncRateLimitBackoffBehavior(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync retry rate-limit",
+		"  @id fixture.task.sync.retry.ratelimit",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	restore := newBeadsSyncAdapter
+	adapter := tracker.NewBeadsAdapter()
+	adapter.SetPushFailures("fixture.task.sync.retry.ratelimit", []error{
+		fmt.Errorf("%w: 429", tracker.ErrRateLimitedSync),
+		fmt.Errorf("%w: 429", tracker.ErrRateLimitedSync),
+	})
+	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
+	defer func() { newBeadsSyncAdapter = restore }()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0 after rate-limit retries, got %d stderr=%q", exit, errOut.String())
+	}
+
+	j, err := journal.Load(stateDir)
+	if err != nil {
+		t.Fatalf("load sync journal: %v", err)
+	}
+	var retryAnnotated int
+	var successAttempt int
+	for _, a := range j.Attempts {
+		if a.ID != "fixture.task.sync.retry.ratelimit" {
+			continue
+		}
+		if a.Outcome == journal.OutcomeFailed && strings.Contains(a.Error, "backoff_ms=") {
+			retryAnnotated++
+		}
+		if a.Outcome == journal.OutcomeSuccess {
+			successAttempt = a.Attempt
+		}
+	}
+	if retryAnnotated < 2 {
+		t.Fatalf("expected failed retry attempts to include deterministic backoff annotation, got %#v", j.Attempts)
+	}
+	if successAttempt != 3 {
+		t.Fatalf("expected success on attempt 3 after two rate-limit retries, got %d", successAttempt)
 	}
 }
