@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vikramoddiraju/planmark/internal/protocol"
@@ -70,5 +71,46 @@ func TestContextJSONUsesProtocolEnvelope(t *testing.T) {
 	}
 	if _, ok := payload["data"].(map[string]any); !ok {
 		t.Fatalf("expected object data payload, got %T", payload["data"])
+	}
+}
+
+func TestContextL2JSONIncludesClosure(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Root",
+		"  @id fixture.task.root",
+		"  @horizon later",
+		"  @deps fixture.task.dep",
+		"",
+		"- [ ] Dep",
+		"  @id fixture.task.dep",
+		"  @horizon later",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"context", "--plan", planPath, "--format", "json", "fixture.task.root", "--level", "L2"}, &out, &errOut)
+	if exit != protocol.ExitSuccess {
+		t.Fatalf("expected context exit success, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json output: %v output=%q", err, out.String())
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object, got %T", payload["data"])
+	}
+	closure, ok := data["closure"].([]any)
+	if !ok {
+		t.Fatalf("expected closure array in L2 output, got %T", data["closure"])
+	}
+	if len(closure) != 1 {
+		t.Fatalf("expected 1 closure item, got %d", len(closure))
 	}
 }

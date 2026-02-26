@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/cache"
@@ -50,6 +51,24 @@ type L1Packet struct {
 	Pins []PinExtract `json:"pins,omitempty"`
 }
 
+type L2Dependency struct {
+	TaskID     string   `json:"task_id"`
+	NodeRef    string   `json:"node_ref"`
+	Title      string   `json:"title"`
+	Horizon    string   `json:"horizon,omitempty"`
+	Deps       []string `json:"deps,omitempty"`
+	Accept     []string `json:"accept,omitempty"`
+	SourcePath string   `json:"source_path"`
+	StartLine  int      `json:"start_line"`
+	EndLine    int      `json:"end_line"`
+	SliceHash  string   `json:"slice_hash"`
+}
+
+type L2Packet struct {
+	L0Packet
+	Closure []L2Dependency `json:"closure,omitempty"`
+}
+
 func BuildL0(plan ir.PlanIR, taskID string) (L0Packet, error) {
 	task, node, err := resolveTaskAndNode(plan, taskID)
 	if err != nil {
@@ -73,6 +92,90 @@ func BuildL1(plan ir.PlanIR, taskID string) (L1Packet, error) {
 	return L1Packet{
 		L0Packet: base,
 		Pins:     pins,
+	}, nil
+}
+
+func BuildL2(plan ir.PlanIR, taskID string) (L2Packet, error) {
+	task, node, err := resolveTaskAndNode(plan, taskID)
+	if err != nil {
+		return L2Packet{}, err
+	}
+
+	taskByID := make(map[string]ir.Task, len(plan.Semantic.Tasks))
+	for _, candidate := range plan.Semantic.Tasks {
+		taskByID[strings.TrimSpace(candidate.ID)] = candidate
+	}
+	nodeByRef := make(map[string]ir.SourceNode, len(plan.Source.Nodes))
+	for _, sourceNode := range plan.Source.Nodes {
+		nodeByRef[sourceNode.NodeRef] = sourceNode
+	}
+
+	visited := make(map[string]struct{})
+	var visit func(string) error
+	visit = func(id string) error {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil
+		}
+		if _, seen := visited[id]; seen {
+			return nil
+		}
+		depTask, ok := taskByID[id]
+		if !ok {
+			return fmt.Errorf("dependency task not found: %s", id)
+		}
+		visited[id] = struct{}{}
+
+		nextDeps := append([]string(nil), depTask.Deps...)
+		sort.Strings(nextDeps)
+		for _, depID := range nextDeps {
+			if err := visit(depID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	rootDeps := append([]string(nil), task.Deps...)
+	sort.Strings(rootDeps)
+	for _, depID := range rootDeps {
+		if err := visit(depID); err != nil {
+			return L2Packet{}, err
+		}
+	}
+
+	orderedIDs := make([]string, 0, len(visited))
+	for id := range visited {
+		orderedIDs = append(orderedIDs, id)
+	}
+	sort.Strings(orderedIDs)
+
+	closure := make([]L2Dependency, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		depTask := taskByID[id]
+		depNode, ok := nodeByRef[depTask.NodeRef]
+		if !ok {
+			return L2Packet{}, fmt.Errorf("source node missing for dependency task %q (node_ref=%s)", depTask.ID, depTask.NodeRef)
+		}
+		closure = append(closure, L2Dependency{
+			TaskID:     depTask.ID,
+			NodeRef:    depTask.NodeRef,
+			Title:      depTask.Title,
+			Horizon:    depTask.Horizon,
+			Deps:       append([]string(nil), depTask.Deps...),
+			Accept:     append([]string(nil), depTask.Accept...),
+			SourcePath: plan.PlanPath,
+			StartLine:  depNode.StartLine,
+			EndLine:    depNode.EndLine,
+			SliceHash:  depNode.SliceHash,
+		})
+	}
+
+	base := buildL0Packet(plan, task, node)
+	base.Level = "L2"
+	return L2Packet{
+		L0Packet: base,
+		Closure:  closure,
 	}, nil
 }
 

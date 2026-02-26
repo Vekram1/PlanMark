@@ -93,45 +93,144 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 		return protocol.ExitInternalError
 	}
 
-	if strings.ToUpper(strings.TrimSpace(*level)) != "L0" {
-		fmt.Fprintf(stderr, "level %q not implemented yet (supported: L0)\n", *level)
-		return protocol.ExitUsageError
-	}
-
-	packet, err := contextpkg.BuildL0(compiled, taskID)
-	if err != nil {
-		if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
-			fmt.Fprintln(stderr, err.Error())
-			return protocol.ExitValidationFailed
-		}
-		fmt.Fprintf(stderr, "build context: %v\n", err)
-		return protocol.ExitInternalError
-	}
+	levelNormalized := strings.ToUpper(strings.TrimSpace(*level))
 
 	switch strings.ToLower(strings.TrimSpace(*format)) {
 	case "json":
-		payload := protocol.Envelope[contextpkg.L0Packet]{
-			SchemaVersion: protocol.SchemaVersionV01,
-			ToolVersion:   CLIVersion,
-			Command:       "context",
-			Status:        "ok",
-			Data:          packet,
-		}
-		enc := json.NewEncoder(stdout)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(payload); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return protocol.ExitInternalError
+		switch levelNormalized {
+		case "L0":
+			packet, err := contextpkg.BuildL0(compiled, taskID)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			payload := protocol.Envelope[contextpkg.L0Packet]{
+				SchemaVersion: protocol.SchemaVersionV01,
+				ToolVersion:   CLIVersion,
+				Command:       "context",
+				Status:        "ok",
+				Data:          packet,
+			}
+			enc := json.NewEncoder(stdout)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(payload); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return protocol.ExitInternalError
+			}
+		case "L1":
+			packet, err := contextpkg.BuildL1(compiled, taskID)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			payload := protocol.Envelope[contextpkg.L1Packet]{
+				SchemaVersion: protocol.SchemaVersionV01,
+				ToolVersion:   CLIVersion,
+				Command:       "context",
+				Status:        "ok",
+				Data:          packet,
+			}
+			enc := json.NewEncoder(stdout)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(payload); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return protocol.ExitInternalError
+			}
+		case "L2":
+			packet, err := contextpkg.BuildL2(compiled, taskID)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			payload := protocol.Envelope[contextpkg.L2Packet]{
+				SchemaVersion: protocol.SchemaVersionV01,
+				ToolVersion:   CLIVersion,
+				Command:       "context",
+				Status:        "ok",
+				Data:          packet,
+			}
+			enc := json.NewEncoder(stdout)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(payload); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return protocol.ExitInternalError
+			}
+		default:
+			fmt.Fprintf(stderr, "level %q not implemented yet (supported: L0|L1|L2)\n", *level)
+			return protocol.ExitUsageError
 		}
 	case "text":
-		fmt.Fprintf(stdout, "level: %s\n", packet.Level)
-		fmt.Fprintf(stdout, "task_id: %s\n", packet.TaskID)
-		fmt.Fprintf(stdout, "title: %s\n", packet.Title)
-		fmt.Fprintf(stdout, "horizon: %s\n", packet.Horizon)
-		fmt.Fprintf(stdout, "source_path: %s\n", packet.SourcePath)
-		fmt.Fprintf(stdout, "source_range: %d-%d\n", packet.StartLine, packet.EndLine)
-		fmt.Fprintf(stdout, "slice_hash: %s\n", packet.SliceHash)
-		fmt.Fprintf(stdout, "slice_text:\n%s\n", packet.SliceText)
+		switch levelNormalized {
+		case "L0":
+			packet, err := contextpkg.BuildL0(compiled, taskID)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			fmt.Fprintf(stdout, "level: %s\n", packet.Level)
+			fmt.Fprintf(stdout, "task_id: %s\n", packet.TaskID)
+			fmt.Fprintf(stdout, "title: %s\n", packet.Title)
+			fmt.Fprintf(stdout, "horizon: %s\n", packet.Horizon)
+			fmt.Fprintf(stdout, "source_path: %s\n", packet.SourcePath)
+			fmt.Fprintf(stdout, "source_range: %d-%d\n", packet.StartLine, packet.EndLine)
+			fmt.Fprintf(stdout, "slice_hash: %s\n", packet.SliceHash)
+			fmt.Fprintf(stdout, "slice_text:\n%s\n", packet.SliceText)
+		case "L1":
+			packet, err := contextpkg.BuildL1(compiled, taskID)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			fmt.Fprintf(stdout, "level: %s\n", packet.Level)
+			fmt.Fprintf(stdout, "task_id: %s\n", packet.TaskID)
+			fmt.Fprintf(stdout, "title: %s\n", packet.Title)
+			fmt.Fprintf(stdout, "horizon: %s\n", packet.Horizon)
+			fmt.Fprintf(stdout, "source_path: %s\n", packet.SourcePath)
+			fmt.Fprintf(stdout, "source_range: %d-%d\n", packet.StartLine, packet.EndLine)
+			fmt.Fprintf(stdout, "slice_hash: %s\n", packet.SliceHash)
+			fmt.Fprintf(stdout, "pins: %d\n", len(packet.Pins))
+		case "L2":
+			packet, err := contextpkg.BuildL2(compiled, taskID)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			fmt.Fprintf(stdout, "level: %s\n", packet.Level)
+			fmt.Fprintf(stdout, "task_id: %s\n", packet.TaskID)
+			fmt.Fprintf(stdout, "title: %s\n", packet.Title)
+			fmt.Fprintf(stdout, "horizon: %s\n", packet.Horizon)
+			fmt.Fprintf(stdout, "source_path: %s\n", packet.SourcePath)
+			fmt.Fprintf(stdout, "source_range: %d-%d\n", packet.StartLine, packet.EndLine)
+			fmt.Fprintf(stdout, "slice_hash: %s\n", packet.SliceHash)
+			fmt.Fprintf(stdout, "closure: %d\n", len(packet.Closure))
+		default:
+			fmt.Fprintf(stderr, "level %q not implemented yet (supported: L0|L1|L2)\n", *level)
+			return protocol.ExitUsageError
+		}
 	default:
 		fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
 		return protocol.ExitUsageError

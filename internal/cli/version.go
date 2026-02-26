@@ -59,6 +59,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runChanges(args[1:], stdout, stderr)
 	case "propose-change":
 		return runProposeChange(args[1:], stdout, stderr)
+	case "apply-change":
+		return runApplyChange(args[1:], stdout, stderr)
 	case "pack":
 		return runPack(args[1:], stdout, stderr)
 	case "query":
@@ -67,6 +69,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runID(args[1:], stdout, stderr)
 	case "verify-accept":
 		return runVerifyAccept(args[1:], stdout, stderr)
+	case "ai":
+		return runAI(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return protocol.ExitUsageError

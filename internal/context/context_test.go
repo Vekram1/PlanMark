@@ -342,6 +342,86 @@ func TestL1PinWithoutExplicitRangeUsesWholeFile(t *testing.T) {
 	}
 }
 
+func TestL2IncludesDependencyClosureSummaries(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Root task",
+		"  @id fixture.task.root",
+		"  @horizon later",
+		"  @deps fixture.task.b,fixture.task.c",
+		"",
+		"- [ ] Dependency B",
+		"  @id fixture.task.b",
+		"  @horizon later",
+		"  @deps fixture.task.c",
+		"",
+		"- [ ] Dependency C",
+		"  @id fixture.task.c",
+		"  @horizon later",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := BuildL2(compiled, "fixture.task.root")
+	if err != nil {
+		t.Fatalf("build L2 packet: %v", err)
+	}
+	if packet.Level != "L2" {
+		t.Fatalf("expected level L2, got %q", packet.Level)
+	}
+	if len(packet.Closure) != 2 {
+		t.Fatalf("expected 2 closure dependencies, got %d", len(packet.Closure))
+	}
+	if packet.Closure[0].TaskID != "fixture.task.b" || packet.Closure[1].TaskID != "fixture.task.c" {
+		t.Fatalf("unexpected deterministic closure order: %+v", packet.Closure)
+	}
+	for _, dep := range packet.Closure {
+		if dep.SourcePath != filepath.ToSlash(planPath) {
+			t.Fatalf("expected source path %q, got %q", filepath.ToSlash(planPath), dep.SourcePath)
+		}
+		if dep.StartLine <= 0 || dep.EndLine < dep.StartLine {
+			t.Fatalf("invalid source range for %s: %d-%d", dep.TaskID, dep.StartLine, dep.EndLine)
+		}
+		if strings.TrimSpace(dep.SliceHash) == "" {
+			t.Fatalf("missing slice hash for %s", dep.TaskID)
+		}
+	}
+}
+
+func TestL2FailsOnUnresolvedDependency(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Root task",
+		"  @id fixture.task.root",
+		"  @horizon later",
+		"  @deps fixture.task.missing",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	_, err = BuildL2(compiled, "fixture.task.root")
+	if err == nil {
+		t.Fatalf("expected unresolved dependency error")
+	}
+	if !strings.Contains(err.Error(), "dependency task not found") {
+		t.Fatalf("expected unresolved dependency error, got %v", err)
+	}
+}
+
 func TestL1PinsIgnoreMetadataInsideFencedCode(t *testing.T) {
 	tmp := t.TempDir()
 	targetPath := filepath.Join(tmp, "internal", "compile", "parser.go")
