@@ -121,7 +121,20 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 	}
 
 	semanticTasks := make([]ir.Task, 0)
+	taskCandidates := make([]ir.TaskCandidate, 0)
 	for idx, attached := range attachments.Nodes {
+		if isTaskCandidateNode(attached.Node) {
+			taskCandidates = append(taskCandidates, ir.TaskCandidate{
+				NodeRef:   nodeRefs[idx],
+				Path:      filepath.ToSlash(planPath),
+				StartLine: compiled[idx].Slice.StartLine,
+				EndLine:   compiled[idx].Slice.EndLine,
+				SliceHash: compiled[idx].Slice.Hash,
+				Kind:      string(attached.Node.Kind),
+				Title:     strings.TrimSpace(attached.Node.Text),
+			})
+		}
+
 		if attached.Node.Kind != NodeKindCheckbox {
 			continue
 		}
@@ -148,8 +161,23 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 		SemanticDerivationPolicyVersion: "v0.1",
 		PlanPath:                        filepath.ToSlash(planPath),
 		Source:                          ir.SourceIR{Nodes: sourceNodes},
-		Semantic:                        ir.SemanticIR{Tasks: semanticTasks},
+		Semantic: ir.SemanticIR{
+			Tasks:          semanticTasks,
+			TaskCandidates: taskCandidates,
+		},
 	}, nil
+}
+
+func isTaskCandidateNode(node Node) bool {
+	if strings.TrimSpace(node.Text) == "" {
+		return false
+	}
+	switch node.Kind {
+	case NodeKindCheckbox, NodeKindHeading:
+		return true
+	default:
+		return false
+	}
 }
 
 func extractNodes(compiled []CompiledNode) []Node {

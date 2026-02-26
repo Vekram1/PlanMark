@@ -49,6 +49,35 @@
         ],
         "semantic_fingerprint": "b6fe561368207896b9372047b32fb3ac172b00d1e7ad8c3b316ae820abd4ed0f"
       }
+    ],
+    "task_candidates": [
+      {
+        "node_ref": "testdata/plans/mixed.md|heading|fec3a9f505f8182fc3331f94e3d856a1af5cca8a6e5838de5dbd54589cb62a08#1",
+        "path": "testdata/plans/mixed.md",
+        "start_line": 1,
+        "end_line": 1,
+        "slice_hash": "fec3a9f505f8182fc3331f94e3d856a1af5cca8a6e5838de5dbd54589cb62a08",
+        "kind": "heading",
+        "title": "Mixed Fixture"
+      },
+      {
+        "node_ref": "testdata/plans/mixed.md|heading|1f0b17ee2cd5aefe02a8fc088db3934ce50b41ac6b7142890898a02bf735ce7d#1",
+        "path": "testdata/plans/mixed.md",
+        "start_line": 3,
+        "end_line": 3,
+        "slice_hash": "1f0b17ee2cd5aefe02a8fc088db3934ce50b41ac6b7142890898a02bf735ce7d",
+        "kind": "heading",
+        "title": "Source Notes"
+      },
+      {
+        "node_ref": "testdata/plans/mixed.md|checkbox|9aa830d2fd78d27aae8ad9b679135f438cde87bcda9eb23846bf6abcd5f664be#1",
+        "path": "testdata/plans/mixed.md",
+        "start_line": 18,
+        "end_line": 18,
+        "slice_hash": "9aa830d2fd78d27aae8ad9b679135f438cde87bcda9eb23846bf6abcd5f664be",
+        "kind": "checkbox",
+        "title": "Build IR from mixed content"
+      }
     ]
   }
 }

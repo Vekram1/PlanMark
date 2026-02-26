@@ -40,6 +40,15 @@ PlanMark authoring supports mixed Markdown content and task metadata lines.
 - Unknown metadata keys are retained as opaque annotations unless strict policy explicitly rejects them.
 - Mixed content (prose, tables, diagrams, code fences, partial/broken sections) is preserved and never silently dropped.
 
+## Planning-first authoring
+
+Planning-first authoring keeps PLAN writing cheap while preserving deterministic extraction.
+
+- Only checklist + optional @id/@horizon required.
+- Additional metadata (`@accept`, `@deps`, `@touches`, `@why`, and others) can be added incrementally as scope stabilizes.
+- Missing metadata for `next`/`later` work is surfaced as diagnostics, not parse failures.
+- Strict execution gating still applies only when generating L0 execution packets for `horizon=now`.
+
 ## Tolerance contract
 
 Tolerance is a first-class requirement:

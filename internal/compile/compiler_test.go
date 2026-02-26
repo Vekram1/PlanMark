@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -179,6 +180,64 @@ func TestCompileSemanticFingerprintsDeterministic(t *testing.T) {
 				compiledA.Semantic.Tasks[i].SemanticFingerprint,
 				compiledB.Semantic.Tasks[i].SemanticFingerprint,
 			)
+		}
+	}
+}
+
+func TestTaskCandidateExtractionDeterministic(t *testing.T) {
+	planPath := filepath.Join("..", "..", "testdata", "plans", "mixed.md")
+	content, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read plan fixture: %v", err)
+	}
+
+	first, err := CompilePlan(planPath, content, NewParser(nil))
+	if err != nil {
+		t.Fatalf("first compile failed: %v", err)
+	}
+	second, err := CompilePlan(planPath, content, NewParser(nil))
+	if err != nil {
+		t.Fatalf("second compile failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(first.Semantic.TaskCandidates, second.Semantic.TaskCandidates) {
+		t.Fatalf("task candidate extraction is not deterministic:\nfirst=%#v\nsecond=%#v", first.Semantic.TaskCandidates, second.Semantic.TaskCandidates)
+	}
+}
+
+func TestTaskCandidateExtractionPreservesProvenance(t *testing.T) {
+	planPath := filepath.Join("..", "..", "testdata", "plans", "mixed.md")
+	content, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read plan fixture: %v", err)
+	}
+
+	compiled, err := CompilePlan(planPath, content, NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+	if len(compiled.Semantic.TaskCandidates) == 0 {
+		t.Fatalf("expected at least one task candidate")
+	}
+
+	for _, candidate := range compiled.Semantic.TaskCandidates {
+		if strings.TrimSpace(candidate.NodeRef) == "" {
+			t.Fatalf("expected non-empty candidate node_ref: %#v", candidate)
+		}
+		if filepath.ToSlash(planPath) != candidate.Path {
+			t.Fatalf("expected candidate path %q, got %q", filepath.ToSlash(planPath), candidate.Path)
+		}
+		if candidate.StartLine <= 0 || candidate.EndLine < candidate.StartLine {
+			t.Fatalf("invalid candidate line range: %#v", candidate)
+		}
+		if len(strings.TrimSpace(candidate.SliceHash)) != 64 {
+			t.Fatalf("expected sha256 slice hash for candidate: %#v", candidate)
+		}
+		if strings.TrimSpace(candidate.Title) == "" {
+			t.Fatalf("expected candidate title: %#v", candidate)
+		}
+		if candidate.Kind != string(NodeKindHeading) && candidate.Kind != string(NodeKindCheckbox) {
+			t.Fatalf("unexpected candidate kind: %#v", candidate)
 		}
 	}
 }

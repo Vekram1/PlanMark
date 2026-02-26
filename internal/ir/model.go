@@ -27,7 +27,8 @@ type SourceNode struct {
 }
 
 type SemanticIR struct {
-	Tasks []Task `json:"tasks"`
+	Tasks          []Task          `json:"tasks"`
+	TaskCandidates []TaskCandidate `json:"task_candidates,omitempty"`
 }
 
 type Task struct {
@@ -38,6 +39,16 @@ type Task struct {
 	Deps                []string `json:"deps,omitempty"`
 	Accept              []string `json:"accept,omitempty"`
 	SemanticFingerprint string   `json:"semantic_fingerprint,omitempty"`
+}
+
+type TaskCandidate struct {
+	NodeRef   string `json:"node_ref"`
+	Path      string `json:"path"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	SliceHash string `json:"slice_hash"`
+	Kind      string `json:"kind"`
+	Title     string `json:"title"`
 }
 
 type Meta struct {
