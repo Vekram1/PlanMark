@@ -23,8 +23,10 @@ type changesResult struct {
 	PlanPath          string              `json:"plan_path"`
 	StateDir          string              `json:"state_dir"`
 	SinceCompileID    string              `json:"since_compile_id,omitempty"`
+	SinceGitRef       string              `json:"since_git_ref,omitempty"`
 	BaselineCompileID string              `json:"baseline_compile_id,omitempty"`
 	CurrentCompileID  string              `json:"current_compile_id"`
+	AdvisoryHunks     int                 `json:"advisory_hunks,omitempty"`
 	Changes           []change.TaskChange `json:"changes"`
 }
 
@@ -33,7 +35,7 @@ func runChanges(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "PLAN.md", "path to PLAN markdown file")
 	stateDir := fs.String("state-dir", ".planmark", "path to planmark local state directory")
-	since := fs.String("since", "", "baseline compile id for deterministic comparison")
+	since := fs.String("since", "", "baseline compile id or git ref for deterministic comparison")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -43,7 +45,7 @@ func runChanges(args []string, stdout io.Writer, stderr io.Writer) int {
 		return protocol.ExitUsageError
 	}
 	if len(fs.Args()) != 0 {
-		fmt.Fprintln(stderr, "usage: plan changes [--plan <path>] [--state-dir <path>] [--since <compile-id>] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan changes [--plan <path>] [--state-dir <path>] [--since <compile-id|git-ref>] [--format text|json]")
 		return protocol.ExitUsageError
 	}
 
@@ -83,25 +85,49 @@ func runChanges(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	requestedSince := strings.TrimSpace(*since)
-	if requestedSince != "" {
-		if errors.Is(previousManifestErr, os.ErrNotExist) {
-			fmt.Fprintf(stderr, "requested --since %q but no prior compile manifest exists\n", requestedSince)
-			return protocol.ExitValidationFailed
-		}
-		if previousManifest.CompileID != requestedSince {
-			fmt.Fprintf(stderr, "requested --since %q does not match available baseline %q\n", requestedSince, previousManifest.CompileID)
-			return protocol.ExitValidationFailed
-		}
-	}
 
-	previousPlan, hasPreviousPlan, err := readPreviousPlan(resolvedStateDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "read previous plan state: %v\n", err)
-		return protocol.ExitInternalError
-	}
-	if requestedSince != "" && !hasPreviousPlan {
-		fmt.Fprintf(stderr, "requested --since %q but baseline plan snapshot is missing\n", requestedSince)
-		return protocol.ExitValidationFailed
+	var (
+		previousPlan    ir.PlanIR
+		hasPreviousPlan bool
+		advisoryHunks   int
+	)
+	if requestedSince != "" {
+		if !errors.Is(previousManifestErr, os.ErrNotExist) && previousManifest.CompileID == requestedSince {
+			previousPlan, hasPreviousPlan, err = readPreviousPlan(resolvedStateDir)
+			if err != nil {
+				fmt.Fprintf(stderr, "read previous plan state: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			if !hasPreviousPlan {
+				fmt.Fprintf(stderr, "requested --since %q but baseline plan snapshot is missing\n", requestedSince)
+				return protocol.ExitValidationFailed
+			}
+		} else {
+			baselineContent, err := change.LoadPlanContentAtGitRef(resolvedPlanPath, requestedSince, nil)
+			if err != nil {
+				if errors.Is(previousManifestErr, os.ErrNotExist) {
+					fmt.Fprintf(stderr, "requested --since %q but no prior compile manifest exists and git baseline could not be resolved: %v\n", requestedSince, err)
+				} else {
+					fmt.Fprintf(stderr, "requested --since %q does not match available baseline %q and git baseline could not be resolved: %v\n", requestedSince, previousManifest.CompileID, err)
+				}
+				return protocol.ExitValidationFailed
+			}
+			previousPlan, err = compile.CompilePlan(resolvedPlanPath, baselineContent, compile.NewParser(nil))
+			if err != nil {
+				fmt.Fprintf(stderr, "compile baseline plan at ref %q: %v\n", requestedSince, err)
+				return protocol.ExitInternalError
+			}
+			hasPreviousPlan = true
+			if hints, err := change.LoadPlanGitDiffHintsSince(resolvedPlanPath, requestedSince, nil); err == nil {
+				advisoryHunks = len(hints)
+			}
+		}
+	} else {
+		previousPlan, hasPreviousPlan, err = readPreviousPlan(resolvedStateDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "read previous plan state: %v\n", err)
+			return protocol.ExitInternalError
+		}
 	}
 
 	changes := make([]change.TaskChange, 0)
@@ -114,9 +140,16 @@ func runChanges(args []string, stdout io.Writer, stderr io.Writer) int {
 	result := changesResult{
 		PlanPath:         currentPlan.PlanPath,
 		StateDir:         filepath.ToSlash(resolvedStateDir),
-		SinceCompileID:   requestedSince,
 		CurrentCompileID: currentManifest.CompileID,
+		AdvisoryHunks:    advisoryHunks,
 		Changes:          changes,
+	}
+	if requestedSince != "" {
+		if !errors.Is(previousManifestErr, os.ErrNotExist) && previousManifest.CompileID == requestedSince {
+			result.SinceCompileID = requestedSince
+		} else {
+			result.SinceGitRef = requestedSince
+		}
 	}
 	if !errors.Is(previousManifestErr, os.ErrNotExist) {
 		result.BaselineCompileID = previousManifest.CompileID
@@ -154,6 +187,13 @@ func runChanges(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "current_compile_id: %s\n", result.CurrentCompileID)
 		if result.BaselineCompileID != "" {
 			fmt.Fprintf(stdout, "baseline_compile_id: %s\n", result.BaselineCompileID)
+		}
+		if result.SinceCompileID != "" {
+			fmt.Fprintf(stdout, "since_compile_id: %s\n", result.SinceCompileID)
+		}
+		if result.SinceGitRef != "" {
+			fmt.Fprintf(stdout, "since_git_ref: %s\n", result.SinceGitRef)
+			fmt.Fprintf(stdout, "advisory_hunks: %d\n", result.AdvisoryHunks)
 		}
 		fmt.Fprintf(stdout, "changes_count: %d\n", len(result.Changes))
 		for _, c := range result.Changes {

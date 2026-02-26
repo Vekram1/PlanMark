@@ -3,11 +3,16 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vikramoddiraju/planmark/internal/change"
+	"github.com/vikramoddiraju/planmark/internal/compile"
 )
 
 func TestChangesCLIJSONOutputStable(t *testing.T) {
@@ -109,6 +114,82 @@ func TestChangesCLIFailsWhenSinceBaselineSnapshotMissing(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "baseline plan snapshot is missing") {
 		t.Fatalf("expected missing baseline snapshot error, got %q", errOut.String())
+	}
+}
+
+func TestChangesSinceGitStillUsesCanonicalDiff(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+
+	runGit(t, tmp, "init")
+	runGit(t, tmp, "config", "user.email", "planmark-tests@example.com")
+	runGit(t, tmp, "config", "user.name", "PlanMark Tests")
+
+	basePlan := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(basePlan), 0o644); err != nil {
+		t.Fatalf("write base plan: %v", err)
+	}
+	runGit(t, tmp, "add", "PLAN.md")
+	runGit(t, tmp, "commit", "-m", "base plan")
+
+	currentPlan := strings.Replace(basePlan, "Task now", "Task now changed", 1)
+	if err := os.WriteFile(planPath, []byte(currentPlan), 0o644); err != nil {
+		t.Fatalf("write current plan: %v", err)
+	}
+
+	baselineContent, err := change.LoadPlanContentAtGitRef(planPath, "HEAD", nil)
+	if err != nil {
+		t.Fatalf("load baseline content from git: %v", err)
+	}
+	baselineIR, err := compile.CompilePlan(planPath, baselineContent, compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile baseline plan: %v", err)
+	}
+	currentIR, err := compile.CompilePlan(planPath, []byte(currentPlan), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile current plan: %v", err)
+	}
+	expected := change.SemanticDiff(baselineIR, currentIR)
+
+	out := runChangesJSON(t, []string{"changes", "--plan", planPath, "--state-dir", stateDir, "--since", "HEAD", "--format", "json"})
+	if got := jsonPathString(t, out, "data", "since_git_ref"); got != "HEAD" {
+		t.Fatalf("expected since_git_ref=HEAD, got %q", got)
+	}
+
+	rawChanges, ok := jsonPath(out, "data", "changes").([]interface{})
+	if !ok {
+		t.Fatalf("expected changes array in output")
+	}
+	got := make([]change.TaskChange, 0, len(rawChanges))
+	for _, item := range rawChanges {
+		raw, err := json.Marshal(item)
+		if err != nil {
+			t.Fatalf("marshal change item: %v", err)
+		}
+		var entry change.TaskChange
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatalf("unmarshal change item: %v", err)
+		}
+		got = append(got, entry)
+	}
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("expected canonical semantic diff unchanged in --since git mode\nexpected=%#v\ngot=%#v", expected, got)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, fmt.Sprintf("%s", out))
 	}
 }
 
