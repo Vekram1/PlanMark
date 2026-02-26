@@ -140,11 +140,44 @@ func TestCompile(t *testing.T) {
 	for _, task := range compiled.Semantic.Tasks {
 		if task.ID == "fixture.mixed.ir" {
 			found = true
+			if strings.TrimSpace(task.SemanticFingerprint) == "" {
+				t.Fatalf("expected semantic fingerprint for task %q", task.ID)
+			}
 			break
 		}
 	}
 	if !found {
 		t.Fatalf("expected semantic task id fixture.mixed.ir, got %#v", compiled.Semantic.Tasks)
+	}
+}
+
+func TestCompileSemanticFingerprintsDeterministic(t *testing.T) {
+	planPath := filepath.Join("..", "..", "testdata", "plans", "mixed.md")
+	content, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read plan fixture: %v", err)
+	}
+
+	compiledA, err := CompilePlan(planPath, content, NewParser(nil))
+	if err != nil {
+		t.Fatalf("first compile failed: %v", err)
+	}
+	compiledB, err := CompilePlan(planPath, content, NewParser(nil))
+	if err != nil {
+		t.Fatalf("second compile failed: %v", err)
+	}
+	if len(compiledA.Semantic.Tasks) != len(compiledB.Semantic.Tasks) {
+		t.Fatalf("task count mismatch across compiles: %d vs %d", len(compiledA.Semantic.Tasks), len(compiledB.Semantic.Tasks))
+	}
+	for i := range compiledA.Semantic.Tasks {
+		if compiledA.Semantic.Tasks[i].SemanticFingerprint != compiledB.Semantic.Tasks[i].SemanticFingerprint {
+			t.Fatalf("fingerprint mismatch for task index %d (%s): %q vs %q",
+				i,
+				compiledA.Semantic.Tasks[i].ID,
+				compiledA.Semantic.Tasks[i].SemanticFingerprint,
+				compiledB.Semantic.Tasks[i].SemanticFingerprint,
+			)
+		}
 	}
 }
 

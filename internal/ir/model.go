@@ -31,12 +31,13 @@ type SemanticIR struct {
 }
 
 type Task struct {
-	ID      string   `json:"id"`
-	NodeRef string   `json:"node_ref"`
-	Title   string   `json:"title"`
-	Horizon string   `json:"horizon,omitempty"`
-	Deps    []string `json:"deps,omitempty"`
-	Accept  []string `json:"accept,omitempty"`
+	ID                  string   `json:"id"`
+	NodeRef             string   `json:"node_ref"`
+	Title               string   `json:"title"`
+	Horizon             string   `json:"horizon,omitempty"`
+	Deps                []string `json:"deps,omitempty"`
+	Accept              []string `json:"accept,omitempty"`
+	SemanticFingerprint string   `json:"semantic_fingerprint,omitempty"`
 }
 
 type Meta struct {

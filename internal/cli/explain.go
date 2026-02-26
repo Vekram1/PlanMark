@@ -104,9 +104,20 @@ func runExplain(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	switch strings.ToLower(strings.TrimSpace(*format)) {
 	case "json":
+		status := "ok"
+		if !result.Runnable {
+			status = "validation_failed"
+		}
+		payload := protocol.Envelope[contextpkg.ExplainResult]{
+			SchemaVersion: protocol.SchemaVersionV01,
+			ToolVersion:   CLIVersion,
+			Command:       "explain",
+			Status:        status,
+			Data:          result,
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
-		if err := enc.Encode(result); err != nil {
+		if err := enc.Encode(payload); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return protocol.ExitInternalError
 		}

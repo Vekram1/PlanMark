@@ -62,9 +62,20 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stdout, doctor.FormatDiagnosticsText(result.Diagnostics))
 		}
 	case "json":
+		status := "ok"
+		if errorCount > 0 {
+			status = "validation_failed"
+		}
+		payload := protocol.Envelope[doctor.Result]{
+			SchemaVersion: protocol.SchemaVersionV01,
+			ToolVersion:   CLIVersion,
+			Command:       "doctor",
+			Status:        status,
+			Data:          result,
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
-		if err := enc.Encode(result); err != nil {
+		if err := enc.Encode(payload); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return protocol.ExitInternalError
 		}

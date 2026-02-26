@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/vikramoddiraju/planmark/internal/build"
 	"github.com/vikramoddiraju/planmark/internal/ir"
 )
 
@@ -118,6 +119,7 @@ func CompilePlan(planPath string, content []byte, parser *Parser) (ir.PlanIR, er
 			Deps:    splitCSVValues(attached.KnownByKey["deps"]),
 			Accept:  valuesOf(attached.KnownByKey["accept"]),
 		}
+		task.SemanticFingerprint = build.TaskSemanticFingerprint(task)
 		semanticTasks = append(semanticTasks, task)
 	}
 

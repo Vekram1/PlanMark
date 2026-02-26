@@ -110,9 +110,16 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	switch strings.ToLower(strings.TrimSpace(*format)) {
 	case "json":
+		payload := protocol.Envelope[contextpkg.L0Packet]{
+			SchemaVersion: protocol.SchemaVersionV01,
+			ToolVersion:   CLIVersion,
+			Command:       "context",
+			Status:        "ok",
+			Data:          packet,
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetEscapeHTML(false)
-		if err := enc.Encode(packet); err != nil {
+		if err := enc.Encode(payload); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return protocol.ExitInternalError
 		}

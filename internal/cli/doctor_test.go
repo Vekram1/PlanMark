@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,5 +96,42 @@ func TestDoctorLooseProfileDowngradesNowMissingAcceptToWarning(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "warning MISSING_ACCEPT") {
 		t.Fatalf("expected warning diagnostic in output, got: %q", out.String())
+	}
+}
+
+func TestDoctorJSONOutputUsesProtocolEnvelope(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task next",
+		"  @id task.next",
+		"  @horizon next",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"doctor", "--plan", planPath, "--profile", "loose", "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json output: %v output=%q", err, out.String())
+	}
+	if payload["schema_version"] != "v0.1" {
+		t.Fatalf("expected schema_version v0.1, got %v", payload["schema_version"])
+	}
+	if payload["command"] != "doctor" {
+		t.Fatalf("expected command doctor, got %v", payload["command"])
+	}
+	if payload["status"] != "ok" {
+		t.Fatalf("expected status ok, got %v", payload["status"])
+	}
+	if _, ok := payload["data"].(map[string]any); !ok {
+		t.Fatalf("expected object data payload, got %T", payload["data"])
 	}
 }
