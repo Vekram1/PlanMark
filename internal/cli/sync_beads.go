@@ -12,26 +12,34 @@ import (
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/compile"
+	"github.com/vikramoddiraju/planmark/internal/journal"
 	"github.com/vikramoddiraju/planmark/internal/protocol"
 	"github.com/vikramoddiraju/planmark/internal/syncplanner"
 	"github.com/vikramoddiraju/planmark/internal/tracker"
 )
 
 type syncBeadsResult struct {
-	Target         string `json:"target"`
-	PlanPath       string `json:"plan_path"`
-	StateDir       string `json:"state_dir,omitempty"`
-	DryRun         bool   `json:"dry_run"`
-	DeletionPolicy string `json:"deletion_policy"`
-	TasksSeen      int    `json:"tasks_seen"`
-	TasksMutated   int    `json:"tasks_mutated"`
-	DriftCount     int    `json:"drift_count"`
-	ManifestPath   string `json:"manifest_path,omitempty"`
-	CreateCount    int    `json:"create_count"`
-	UpdateCount    int    `json:"update_count"`
-	NoopCount      int    `json:"noop_count"`
-	MarkStaleCount int    `json:"mark_stale_count"`
-	ConflictCount  int    `json:"conflict_count"`
+	Target         string                 `json:"target"`
+	PlanPath       string                 `json:"plan_path"`
+	StateDir       string                 `json:"state_dir,omitempty"`
+	DryRun         bool                   `json:"dry_run"`
+	DeletionPolicy string                 `json:"deletion_policy"`
+	TasksSeen      int                    `json:"tasks_seen"`
+	TasksMutated   int                    `json:"tasks_mutated"`
+	DriftCount     int                    `json:"drift_count"`
+	ManifestPath   string                 `json:"manifest_path,omitempty"`
+	CreateCount    int                    `json:"create_count"`
+	UpdateCount    int                    `json:"update_count"`
+	NoopCount      int                    `json:"noop_count"`
+	MarkStaleCount int                    `json:"mark_stale_count"`
+	ConflictCount  int                    `json:"conflict_count"`
+	PlannedOps     []syncPreviewOperation `json:"planned_ops,omitempty"`
+}
+
+type syncPreviewOperation struct {
+	Kind   string `json:"kind"`
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -193,7 +201,14 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	ops := syncplanner.PlanSyncOps(desired, prior, resolvedDeletionPolicy)
+	result.PlannedOps = make([]syncPreviewOperation, 0, len(ops))
 	for _, op := range ops {
+		opID := journal.SyncOperationID(op)
+		result.PlannedOps = append(result.PlannedOps, syncPreviewOperation{
+			Kind:   string(op.Kind),
+			ID:     op.ID,
+			Reason: op.Reason,
+		})
 		switch op.Kind {
 		case syncplanner.OperationCreate:
 			result.CreateCount++
@@ -206,22 +221,82 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		case syncplanner.OperationConflict:
 			result.ConflictCount++
 		}
+		if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+			OperationID: opID,
+			Kind:        string(op.Kind),
+			ID:          op.ID,
+			Attempt:     1,
+			Outcome:     journal.OutcomePlanned,
+		}); err != nil {
+			fmt.Fprintf(stderr, "append sync journal planned record: %v\n", err)
+			return protocol.ExitInternalError
+		}
 	}
 
 	for _, op := range ops {
+		opID := journal.SyncOperationID(op)
 		if *dryRun {
+			if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+				OperationID: opID,
+				Kind:        string(op.Kind),
+				ID:          op.ID,
+				Attempt:     1,
+				Outcome:     journal.OutcomeSkipped,
+			}); err != nil {
+				fmt.Fprintf(stderr, "append sync journal dry-run skip: %v\n", err)
+				return protocol.ExitInternalError
+			}
 			continue
 		}
 		if op.Kind != syncplanner.OperationCreate && op.Kind != syncplanner.OperationUpdate {
+			if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+				OperationID: opID,
+				Kind:        string(op.Kind),
+				ID:          op.ID,
+				Attempt:     1,
+				Outcome:     journal.OutcomeSkipped,
+			}); err != nil {
+				fmt.Fprintf(stderr, "append sync journal non-mutating skip: %v\n", err)
+				return protocol.ExitInternalError
+			}
 			continue
 		}
 		taskProjection, ok := taskProjectionByID[op.ID]
 		if !ok {
+			if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+				OperationID: opID,
+				Kind:        string(op.Kind),
+				ID:          op.ID,
+				Attempt:     1,
+				Outcome:     journal.OutcomeFailed,
+				Error:       "missing task projection for planned operation",
+			}); err != nil {
+				fmt.Fprintf(stderr, "append sync journal missing projection failure: %v\n", err)
+				return protocol.ExitInternalError
+			}
 			continue
 		}
 		pushResult, err := adapter.PushTask(ctx, taskProjection)
 		if err != nil {
+			_ = journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+				OperationID: opID,
+				Kind:        string(op.Kind),
+				ID:          op.ID,
+				Attempt:     1,
+				Outcome:     journal.OutcomeFailed,
+				Error:       err.Error(),
+			})
 			fmt.Fprintf(stderr, "push task projection: %v\n", err)
+			return protocol.ExitInternalError
+		}
+		if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+			OperationID: opID,
+			Kind:        string(op.Kind),
+			ID:          op.ID,
+			Attempt:     1,
+			Outcome:     journal.OutcomeSuccess,
+		}); err != nil {
+			fmt.Fprintf(stderr, "append sync journal success record: %v\n", err)
 			return protocol.ExitInternalError
 		}
 		if pushResult.Mutated {
@@ -255,6 +330,12 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "noop_count: %d\n", result.NoopCount)
 		fmt.Fprintf(stdout, "mark_stale_count: %d\n", result.MarkStaleCount)
 		fmt.Fprintf(stdout, "conflict_count: %d\n", result.ConflictCount)
+		if result.DryRun {
+			fmt.Fprintln(stdout, "planned_ops:")
+			for _, op := range result.PlannedOps {
+				fmt.Fprintf(stdout, "- %s %s (%s)\n", op.Kind, op.ID, op.Reason)
+			}
+		}
 		if result.ManifestPath != "" {
 			fmt.Fprintf(stdout, "manifest_path: %s\n", result.ManifestPath)
 		}
