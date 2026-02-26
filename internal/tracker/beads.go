@@ -40,6 +40,7 @@ type BeadsProjectionPayload struct {
 type BeadsAdapter struct {
 	projectionHashByID map[string]string
 	sourceHashByID     map[string]string
+	provenanceByID     map[string]TaskProvenance
 	remoteIDByID       map[string]string
 	runtimeByID        map[string]RuntimeFields
 	lastSeenRuntime    map[string]string
@@ -50,7 +51,12 @@ type BeadsManifestEntry struct {
 	ID                  string `json:"id"`
 	RemoteID            string `json:"remote_id,omitempty"`
 	ProjectionHash      string `json:"projection_hash,omitempty"`
+	NodeRef             string `json:"node_ref,omitempty"`
+	SourcePath          string `json:"source_path,omitempty"`
+	SourceStartLine     int    `json:"source_start_line,omitempty"`
+	SourceEndLine       int    `json:"source_end_line,omitempty"`
 	SourceHash          string `json:"source_hash,omitempty"`
+	CompileID           string `json:"compile_id,omitempty"`
 	LastSeenRuntimeHash string `json:"last_seen_runtime_hash,omitempty"`
 }
 
@@ -63,6 +69,7 @@ func NewBeadsAdapter() *BeadsAdapter {
 	return &BeadsAdapter{
 		projectionHashByID: map[string]string{},
 		sourceHashByID:     map[string]string{},
+		provenanceByID:     map[string]TaskProvenance{},
 		remoteIDByID:       map[string]string{},
 		runtimeByID:        map[string]RuntimeFields{},
 		lastSeenRuntime:    map[string]string{},
@@ -79,6 +86,14 @@ func (a *BeadsAdapter) SeedFromSyncManifest(manifest BeadsSyncManifest) {
 		a.remoteIDByID[id] = strings.TrimSpace(entry.RemoteID)
 		a.projectionHashByID[id] = strings.TrimSpace(entry.ProjectionHash)
 		a.sourceHashByID[id] = strings.TrimSpace(entry.SourceHash)
+		a.provenanceByID[id] = TaskProvenance{
+			NodeRef:    strings.TrimSpace(entry.NodeRef),
+			Path:       strings.TrimSpace(entry.SourcePath),
+			StartLine:  entry.SourceStartLine,
+			EndLine:    entry.SourceEndLine,
+			SourceHash: strings.TrimSpace(entry.SourceHash),
+			CompileID:  strings.TrimSpace(entry.CompileID),
+		}
 		a.lastSeenRuntime[id] = strings.TrimSpace(entry.LastSeenRuntimeHash)
 	}
 }
@@ -161,6 +176,14 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 	}
 	a.projectionHashByID[task.ID] = currentHash
 	a.sourceHashByID[task.ID] = payload.SourceHash
+	a.provenanceByID[task.ID] = TaskProvenance{
+		NodeRef:    strings.TrimSpace(task.NodeRef),
+		Path:       task.SourcePath,
+		StartLine:  task.SourceStartLine,
+		EndLine:    task.SourceEndLine,
+		SourceHash: task.SourceHash,
+		CompileID:  strings.TrimSpace(task.CompileID),
+	}
 	a.remoteIDByID[task.ID] = remoteID
 
 	diagnostic := "projection updated"
@@ -265,7 +288,12 @@ func (a *BeadsAdapter) BuildSyncManifest() BeadsSyncManifest {
 			ID:                  id,
 			RemoteID:            a.remoteIDByID[id],
 			ProjectionHash:      a.projectionHashByID[id],
+			NodeRef:             a.provenanceByID[id].NodeRef,
+			SourcePath:          a.provenanceByID[id].Path,
+			SourceStartLine:     a.provenanceByID[id].StartLine,
+			SourceEndLine:       a.provenanceByID[id].EndLine,
 			SourceHash:          a.sourceHashByID[id],
+			CompileID:           a.provenanceByID[id].CompileID,
 			LastSeenRuntimeHash: a.lastSeenRuntime[id],
 		})
 	}

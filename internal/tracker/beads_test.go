@@ -260,18 +260,22 @@ func TestBeadsWriteSyncManifest(t *testing.T) {
 	firstTask := TaskProjection{
 		ID:              "fixture.task.manifest.a",
 		Title:           "Manifest A",
+		NodeRef:         "testdata/plans/mixed.md|checkbox|a#1",
 		SourcePath:      "testdata/plans/mixed.md",
 		SourceStartLine: 1,
 		SourceEndLine:   2,
 		SourceHash:      strings.Repeat("1", 64),
+		CompileID:       strings.Repeat("a", 64),
 	}
 	secondTask := TaskProjection{
 		ID:              "fixture.task.manifest.b",
 		Title:           "Manifest B",
+		NodeRef:         "testdata/plans/mixed.md|checkbox|b#1",
 		SourcePath:      "testdata/plans/mixed.md",
 		SourceStartLine: 3,
 		SourceEndLine:   4,
 		SourceHash:      strings.Repeat("2", 64),
+		CompileID:       strings.Repeat("b", 64),
 	}
 	if _, err := adapter.PushTask(ctx, secondTask); err != nil {
 		t.Fatalf("push second task: %v", err)
@@ -319,6 +323,15 @@ func TestBeadsWriteSyncManifest(t *testing.T) {
 	}
 	if manifest.Entries[1].LastSeenRuntimeHash != "" {
 		t.Fatalf("expected second entry to omit runtime hash, got %#v", manifest.Entries[1])
+	}
+	if manifest.Entries[0].NodeRef != firstTask.NodeRef || manifest.Entries[1].NodeRef != secondTask.NodeRef {
+		t.Fatalf("expected node refs in manifest entries, got %#v", manifest.Entries)
+	}
+	if manifest.Entries[0].SourcePath != firstTask.SourcePath || manifest.Entries[1].SourcePath != secondTask.SourcePath {
+		t.Fatalf("expected source paths in manifest entries, got %#v", manifest.Entries)
+	}
+	if manifest.Entries[0].CompileID != firstTask.CompileID || manifest.Entries[1].CompileID != secondTask.CompileID {
+		t.Fatalf("expected compile ids in manifest entries, got %#v", manifest.Entries)
 	}
 }
 

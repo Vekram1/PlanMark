@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -139,6 +141,11 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "compile plan: %v\n", err)
 		return protocol.ExitInternalError
 	}
+	compileID, err := semanticCompileID(compiled)
+	if err != nil {
+		fmt.Fprintf(stderr, "compute compile id: %v\n", err)
+		return protocol.ExitInternalError
+	}
 
 	nodesByRef := make(map[string]struct {
 		startLine int
@@ -194,6 +201,8 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			SourceStartLine: node.startLine,
 			SourceEndLine:   node.endLine,
 			SourceHash:      node.sliceHash,
+			NodeRef:         task.NodeRef,
+			CompileID:       compileID,
 			Accept:          append([]string(nil), task.Accept...),
 		}
 		hash, err := syncplanner.ProjectionHashForTask(projection)
@@ -202,12 +211,34 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 		taskProjectionByID[task.ID] = projection
-		desired = append(desired, syncplanner.DesiredProjection{ID: task.ID, ProjectionHash: hash})
+		desired = append(desired, syncplanner.DesiredProjection{
+			ID:             task.ID,
+			ProjectionHash: hash,
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    task.NodeRef,
+				Path:       compiled.PlanPath,
+				StartLine:  node.startLine,
+				EndLine:    node.endLine,
+				SourceHash: node.sliceHash,
+				CompileID:  compileID,
+			},
+		})
 		result.TasksSeen++
 	}
 
 	for _, entry := range priorManifest.Entries {
-		prior = append(prior, syncplanner.PriorProjection{ID: entry.ID, ProjectionHash: entry.ProjectionHash})
+		prior = append(prior, syncplanner.PriorProjection{
+			ID:             entry.ID,
+			ProjectionHash: entry.ProjectionHash,
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    entry.NodeRef,
+				Path:       entry.SourcePath,
+				StartLine:  entry.SourceStartLine,
+				EndLine:    entry.SourceEndLine,
+				SourceHash: entry.SourceHash,
+				CompileID:  entry.CompileID,
+			},
+		})
 	}
 
 	ops := syncplanner.PlanSyncOps(desired, prior, resolvedDeletionPolicy)
@@ -390,6 +421,15 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	return protocol.ExitSuccess
+}
+
+func semanticCompileID(compiled any) (string, error) {
+	payload, err := json.Marshal(compiled)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func loadBeadsManifest(path string) (tracker.BeadsSyncManifest, error) {

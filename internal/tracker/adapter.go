@@ -7,12 +7,23 @@ type TaskProjection struct {
 	ID                string
 	Title             string
 	Anchor            string
+	NodeRef           string
 	SourcePath        string
 	SourceStartLine   int
 	SourceEndLine     int
 	SourceHash        string
+	CompileID         string
 	Accept            []string
 	ProjectionVersion string
+}
+
+type TaskProvenance struct {
+	NodeRef    string
+	Path       string
+	StartLine  int
+	EndLine    int
+	SourceHash string
+	CompileID  string
 }
 
 // RuntimeFields are the tracker-owned mutable overlays pulled safely from remote state.

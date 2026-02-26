@@ -225,6 +225,75 @@ func TestSyncBeadsCLIJSONOutputStable(t *testing.T) {
 	}
 }
 
+func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+
+	initialPlan := strings.Join([]string{
+		"- [ ] Provenance gate task",
+		"  @id fixture.task.provenance",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(initialPlan), 0o644); err != nil {
+		t.Fatalf("write initial plan: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	firstExit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if firstExit != 0 {
+		t.Fatalf("expected initial sync success, got %d stderr=%q", firstExit, errOut.String())
+	}
+
+	changedPlan := strings.Join([]string{
+		"## moved section",
+		"",
+		"- [ ] Provenance gate task",
+		"  @id fixture.task.provenance",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(changedPlan), 0o644); err != nil {
+		t.Fatalf("write changed plan: %v", err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	secondExit := Run([]string{"sync", "beads", "--dry-run", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if secondExit != 0 {
+		t.Fatalf("expected dry-run success, got %d stderr=%q", secondExit, errOut.String())
+	}
+
+	var payload struct {
+		Data struct {
+			PlannedOps []struct {
+				Kind   string `json:"kind"`
+				ID     string `json:"id"`
+				Reason string `json:"reason"`
+			} `json:"planned_ops"`
+			MarkStaleCount int `json:"mark_stale_count"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode dry-run json: %v output=%q", err, out.String())
+	}
+	if payload.Data.MarkStaleCount != 1 {
+		t.Fatalf("expected mark_stale_count=1, got %d output=%q", payload.Data.MarkStaleCount, out.String())
+	}
+	if len(payload.Data.PlannedOps) != 1 {
+		t.Fatalf("expected one planned op, got %d output=%q", len(payload.Data.PlannedOps), out.String())
+	}
+	op := payload.Data.PlannedOps[0]
+	if op.Kind != "mark-stale" || op.ID != "fixture.task.provenance" {
+		t.Fatalf("expected mark-stale op for fixture.task.provenance, got %+v", op)
+	}
+	if !strings.Contains(op.Reason, "stale provenance mismatch") {
+		t.Fatalf("expected explicit stale provenance reason, got %q", op.Reason)
+	}
+}
+
 func TestSyncBeadsAcceptsTargetBeforeFlags(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
