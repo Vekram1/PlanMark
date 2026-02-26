@@ -17,6 +17,9 @@ import (
 
 type draftBeadSuggestion struct {
 	TaskID            string `json:"task_id"`
+	ParentTaskID      string `json:"parent_task_id,omitempty"`
+	ChildOrderIndex   int    `json:"child_order_index,omitempty"`
+	DraftLevel        string `json:"draft_level"`
 	Title             string `json:"title"`
 	Horizon           string `json:"horizon,omitempty"`
 	SuggestedTitle    string `json:"suggested_title"`
@@ -102,7 +105,12 @@ func runAIDraftBeads(args []string, stdout io.Writer, stderr io.Writer) int {
 		if len(suggestions) >= *limit {
 			break
 		}
-		suggestions = append(suggestions, buildDraftBeadSuggestion(task))
+		for _, suggestion := range buildDraftBeadSuggestions(task) {
+			if len(suggestions) >= *limit {
+				break
+			}
+			suggestions = append(suggestions, suggestion)
+		}
 	}
 
 	result := draftBeadsResult{
@@ -138,6 +146,13 @@ func runAIDraftBeads(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "suggestions:")
 			for _, suggestion := range result.Suggestions {
 				fmt.Fprintf(stdout, "- %s\n", suggestion.SuggestedTitle)
+				fmt.Fprintf(stdout, "  level: %s\n", suggestion.DraftLevel)
+				if suggestion.ParentTaskID != "" {
+					fmt.Fprintf(stdout, "  parent_task_id: %s\n", suggestion.ParentTaskID)
+				}
+				if suggestion.ChildOrderIndex > 0 {
+					fmt.Fprintf(stdout, "  child_order_index: %d\n", suggestion.ChildOrderIndex)
+				}
 				fmt.Fprintf(stdout, "  type: %s\n", suggestion.SuggestedType)
 				fmt.Fprintf(stdout, "  priority: %d\n", suggestion.SuggestedPriority)
 				fmt.Fprintf(stdout, "  body: %s\n", suggestion.SuggestedBody)
@@ -151,7 +166,7 @@ func runAIDraftBeads(args []string, stdout io.Writer, stderr io.Writer) int {
 	return protocol.ExitSuccess
 }
 
-func buildDraftBeadSuggestion(task ir.Task) draftBeadSuggestion {
+func buildDraftBeadSuggestions(task ir.Task) []draftBeadSuggestion {
 	taskID := canonicalTaskID(task)
 	title := strings.TrimSpace(task.Title)
 	if title == "" {
@@ -165,9 +180,8 @@ func buildDraftBeadSuggestion(task ir.Task) draftBeadSuggestion {
 		fmt.Sprintf("Source title: %s", title),
 		fmt.Sprintf("Horizon: %s", strings.TrimSpace(task.Horizon)),
 	}
-	if len(task.Deps) > 0 {
-		deps := append([]string(nil), task.Deps...)
-		sort.Strings(deps)
+	deps := normalizedDeps(task.Deps)
+	if len(deps) > 0 {
 		lines = append(lines, fmt.Sprintf("Deps: %s", strings.Join(deps, ", ")))
 	}
 	if len(task.Accept) > 0 {
@@ -175,12 +189,14 @@ func buildDraftBeadSuggestion(task ir.Task) draftBeadSuggestion {
 	} else {
 		lines = append(lines, "Acceptance lines: 0 (add explicit checks before execution)")
 	}
-	if len(task.Deps) >= 3 {
+	if len(deps) >= 3 {
 		lines = append(lines, "Split hint: consider splitting into sub-beads by dependency cluster.")
 	}
 
-	return draftBeadSuggestion{
+	suggestions := make([]draftBeadSuggestion, 0, 1+len(task.Accept)+maxInt(1, len(task.Deps)))
+	parent := draftBeadSuggestion{
 		TaskID:            taskID,
+		DraftLevel:        "parent",
 		Title:             title,
 		Horizon:           strings.TrimSpace(task.Horizon),
 		SuggestedTitle:    fmt.Sprintf("[%s] %s", taskID, title),
@@ -188,6 +204,93 @@ func buildDraftBeadSuggestion(task ir.Task) draftBeadSuggestion {
 		SuggestedPriority: priority,
 		SuggestedBody:     strings.Join(lines, "\n"),
 	}
+	suggestions = append(suggestions, parent)
+
+	childIndex := 1
+	for _, acceptLine := range task.Accept {
+		acceptLine = strings.TrimSpace(acceptLine)
+		if acceptLine == "" {
+			continue
+		}
+		suggestions = append(suggestions, draftBeadSuggestion{
+			TaskID:            fmt.Sprintf("%s.child.%02d", taskID, childIndex),
+			ParentTaskID:      taskID,
+			ChildOrderIndex:   childIndex,
+			DraftLevel:        "child",
+			Title:             fmt.Sprintf("Acceptance %d", childIndex),
+			Horizon:           strings.TrimSpace(task.Horizon),
+			SuggestedTitle:    fmt.Sprintf("[%s] %s: acceptance %d", taskID, title, childIndex),
+			SuggestedType:     "task",
+			SuggestedPriority: priority,
+			SuggestedBody: strings.Join([]string{
+				fmt.Sprintf("Parent task: %s", taskID),
+				fmt.Sprintf("Child order index: %d", childIndex),
+				fmt.Sprintf("Acceptance target: %s", acceptLine),
+			}, "\n"),
+		})
+		childIndex++
+	}
+
+	for _, dep := range deps {
+		suggestions = append(suggestions, draftBeadSuggestion{
+			TaskID:            fmt.Sprintf("%s.child.%02d", taskID, childIndex),
+			ParentTaskID:      taskID,
+			ChildOrderIndex:   childIndex,
+			DraftLevel:        "child",
+			Title:             fmt.Sprintf("Dependency %d", childIndex),
+			Horizon:           strings.TrimSpace(task.Horizon),
+			SuggestedTitle:    fmt.Sprintf("[%s] %s: dependency alignment %d", taskID, title, childIndex),
+			SuggestedType:     "task",
+			SuggestedPriority: priority,
+			SuggestedBody: strings.Join([]string{
+				fmt.Sprintf("Parent task: %s", taskID),
+				fmt.Sprintf("Child order index: %d", childIndex),
+				fmt.Sprintf("Dependency to align: %s", dep),
+			}, "\n"),
+		})
+		childIndex++
+	}
+
+	if childIndex == 1 {
+		suggestions = append(suggestions, draftBeadSuggestion{
+			TaskID:            fmt.Sprintf("%s.child.%02d", taskID, childIndex),
+			ParentTaskID:      taskID,
+			ChildOrderIndex:   childIndex,
+			DraftLevel:        "child",
+			Title:             "Refine execution slice",
+			Horizon:           strings.TrimSpace(task.Horizon),
+			SuggestedTitle:    fmt.Sprintf("[%s] %s: refine execution slice", taskID, title),
+			SuggestedType:     "task",
+			SuggestedPriority: priority,
+			SuggestedBody: strings.Join([]string{
+				fmt.Sprintf("Parent task: %s", taskID),
+				fmt.Sprintf("Child order index: %d", childIndex),
+				"Split this coarse task into executable child beads with explicit acceptance lines.",
+			}, "\n"),
+		})
+	}
+
+	return suggestions
+}
+
+func normalizedDeps(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	for _, dep := range raw {
+		dep = strings.TrimSpace(dep)
+		if dep == "" {
+			continue
+		}
+		out = append(out, dep)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func minInt(a int, b int) int {

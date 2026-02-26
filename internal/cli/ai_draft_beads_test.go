@@ -88,12 +88,15 @@ func TestAIDraftBeadsJSONOutputWithHorizonFilter(t *testing.T) {
 		t.Fatalf("expected 1 scanned task for horizon filter, got %v", data["total_scanned"])
 	}
 	suggestions, ok := data["suggestions"].([]any)
-	if !ok || len(suggestions) != 1 {
-		t.Fatalf("expected exactly one suggestion, got %v", data["suggestions"])
+	if !ok || len(suggestions) < 1 {
+		t.Fatalf("expected at least one suggestion, got %v", data["suggestions"])
 	}
 	first := suggestions[0].(map[string]any)
 	if first["task_id"] != "fixture.task.now" {
 		t.Fatalf("expected now task suggestion, got %v", first["task_id"])
+	}
+	if first["draft_level"] != "parent" {
+		t.Fatalf("expected parent draft first, got %v", first["draft_level"])
 	}
 }
 
@@ -175,5 +178,101 @@ func TestAIDraftBeadsUsesFallbackIDWhenTaskIDMissing(t *testing.T) {
 	first := suggestions[0].(map[string]any)
 	if strings.TrimSpace(first["task_id"].(string)) == "" {
 		t.Fatalf("expected non-empty fallback task_id, got %q", first["task_id"])
+	}
+}
+
+func TestAIDraftBeadsGeneratesChildDraftsDeterministically(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Parent task",
+		"  @id fixture.task.parent",
+		"  @horizon next",
+		"  @accept cmd:echo one",
+		"  @accept cmd:echo two",
+		"  @deps fixture.dep.a,fixture.dep.b",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	runOnce := func() (string, string, int) {
+		var out bytes.Buffer
+		var errOut bytes.Buffer
+		exit := Run([]string{"ai", "draft-beads", "--plan", planPath, "--format", "json", "--limit", "8"}, &out, &errOut)
+		return out.String(), errOut.String(), exit
+	}
+
+	out1, err1, exit1 := runOnce()
+	out2, err2, exit2 := runOnce()
+	if exit1 != protocol.ExitSuccess || exit2 != protocol.ExitSuccess {
+		t.Fatalf("expected success exits, got %d/%d stderr1=%q stderr2=%q", exit1, exit2, err1, err2)
+	}
+	if out1 != out2 {
+		t.Fatalf("expected deterministic output\nfirst=%s\nsecond=%s", out1, out2)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(out1), &payload); err != nil {
+		t.Fatalf("decode output json: %v output=%q", err, out1)
+	}
+	data := payload["data"].(map[string]any)
+	suggestions := data["suggestions"].([]any)
+	if len(suggestions) < 3 {
+		t.Fatalf("expected parent + child suggestions, got %d", len(suggestions))
+	}
+	first := suggestions[0].(map[string]any)
+	if first["draft_level"] != "parent" {
+		t.Fatalf("expected first suggestion to be parent, got %v", first["draft_level"])
+	}
+	second := suggestions[1].(map[string]any)
+	if second["draft_level"] != "child" {
+		t.Fatalf("expected second suggestion to be child, got %v", second["draft_level"])
+	}
+	if second["parent_task_id"] != "fixture.task.parent" {
+		t.Fatalf("expected parent_task_id fixture.task.parent, got %v", second["parent_task_id"])
+	}
+	if idx, ok := second["child_order_index"].(float64); !ok || int(idx) != 1 {
+		t.Fatalf("expected child_order_index=1, got %v", second["child_order_index"])
+	}
+	third := suggestions[2].(map[string]any)
+	if idx, ok := third["child_order_index"].(float64); !ok || int(idx) != 2 {
+		t.Fatalf("expected child_order_index=2, got %v", third["child_order_index"])
+	}
+}
+
+func TestAIDraftBeadsChildDepsUseStableSortedOrder(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Parent task",
+		"  @id fixture.task.parent",
+		"  @horizon next",
+		"  @deps fixture.dep.z,fixture.dep.a",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"ai", "draft-beads", "--plan", planPath, "--format", "json", "--limit", "5"}, &out, &errOut)
+	if exit != protocol.ExitSuccess {
+		t.Fatalf("expected success, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode output json: %v output=%q", err, out.String())
+	}
+	data := payload["data"].(map[string]any)
+	suggestions := data["suggestions"].([]any)
+	if len(suggestions) < 3 {
+		t.Fatalf("expected parent + dep children, got %d", len(suggestions))
+	}
+	depChild := suggestions[1].(map[string]any)
+	body := depChild["suggested_body"].(string)
+	if !strings.Contains(body, "Dependency to align: fixture.dep.a") {
+		t.Fatalf("expected first dependency child to use sorted dep fixture.dep.a, got %q", body)
 	}
 }
