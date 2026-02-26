@@ -1,16 +1,19 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/compile"
 	"github.com/vikramoddiraju/planmark/internal/diag"
 	"github.com/vikramoddiraju/planmark/internal/doctor"
+	"github.com/vikramoddiraju/planmark/internal/fsio"
 	"github.com/vikramoddiraju/planmark/internal/protocol"
 )
 
@@ -20,6 +23,7 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 	planPath := fs.String("plan", "", "path to PLAN markdown file")
 	profile := fs.String("profile", "loose", "strictness profile: loose|build|exec")
 	format := fs.String("format", "text", "output format: text|json")
+	fixOut := fs.String("fix-out", "", "write deterministic repair suggestions as Plan Delta JSON (no file mutation)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return protocol.ExitSuccess
@@ -51,6 +55,14 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	errorCount, warningCount := countBySeverity(result.Diagnostics)
+
+	if strings.TrimSpace(*fixOut) != "" {
+		fix := doctor.BuildFixOut(compiled, *profile)
+		if err := writeJSONFile(*fixOut, fix); err != nil {
+			fmt.Fprintf(stderr, "write --fix-out: %v\n", err)
+			return protocol.ExitInternalError
+		}
+	}
 
 	switch *format {
 	case "text":
@@ -100,4 +112,15 @@ func countBySeverity(diagnostics []diag.Diagnostic) (errors int, warnings int) {
 		}
 	}
 	return errors, warnings
+}
+
+func writeJSONFile(path string, value any) error {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(value); err != nil {
+		return err
+	}
+	return fsio.WriteFileAtomic(path, buf.Bytes(), 0o644)
 }
