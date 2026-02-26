@@ -49,6 +49,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runDoctor(args[1:], stdout, stderr)
 	case "context":
 		return runContext(args[1:], stdout, stderr)
+	case "open":
+		return runOpen(args[1:], stdout, stderr)
 	case "explain":
 		return runExplain(args[1:], stdout, stderr)
 	case "sync":

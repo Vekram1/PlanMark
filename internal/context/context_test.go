@@ -1,6 +1,8 @@
 package context
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -72,5 +74,265 @@ func TestL0PacketRefusesNowTaskMissingAccept(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTaskNotReady) {
 		t.Fatalf("expected ErrTaskNotReady, got %v", err)
+	}
+}
+
+func TestL1IncludesPinExtracts(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "internal", "compile", "parser.go")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	targetBody := strings.Join([]string{
+		"package compile",
+		"",
+		"func Parse() {}",
+	}, "\n")
+	if err := os.WriteFile(targetPath, []byte(targetBody), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  @touches internal/compile/parser.go:1-2",
+		"  @pin internal/compile/parser.go:3",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := BuildL1(compiled, "fixture.task.now")
+	if err != nil {
+		t.Fatalf("build L1 packet: %v", err)
+	}
+	if packet.Level != "L1" {
+		t.Fatalf("expected level L1, got %q", packet.Level)
+	}
+	if len(packet.Pins) != 2 {
+		t.Fatalf("expected 2 pin extracts, got %d", len(packet.Pins))
+	}
+
+	first := packet.Pins[0]
+	if first.Key != "touches" {
+		t.Fatalf("expected first key touches, got %q", first.Key)
+	}
+	if first.TargetPath != "internal/compile/parser.go" {
+		t.Fatalf("expected target path internal/compile/parser.go, got %q", first.TargetPath)
+	}
+	if first.StartLine != 1 || first.EndLine != 2 {
+		t.Fatalf("expected line range 1-2, got %d-%d", first.StartLine, first.EndLine)
+	}
+	expectedFirstSlice := "package compile\n"
+	expectedFirstHash := sha256.Sum256([]byte(expectedFirstSlice))
+	if first.TargetHash != hex.EncodeToString(expectedFirstHash[:]) {
+		t.Fatalf("unexpected first target hash: %q", first.TargetHash)
+	}
+
+	second := packet.Pins[1]
+	if second.Key != "pin" {
+		t.Fatalf("expected second key pin, got %q", second.Key)
+	}
+	if second.StartLine != 3 || second.EndLine != 3 {
+		t.Fatalf("expected line range 3-3, got %d-%d", second.StartLine, second.EndLine)
+	}
+	if strings.TrimSpace(second.SliceText) != "func Parse() {}" {
+		t.Fatalf("expected pin slice text for line 3, got %q", second.SliceText)
+	}
+}
+
+func TestPinPathRepoScopeEnforced(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  @pin ../outside.txt:1",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	_, err = BuildL1(compiled, "fixture.task.now")
+	if err == nil {
+		t.Fatalf("expected repo-scope path validation error")
+	}
+	if !strings.Contains(err.Error(), "escapes repository root") {
+		t.Fatalf("expected repository root escape error, got %v", err)
+	}
+}
+
+func TestPinPathSymlinkPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outsideFile, []byte("outside"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	linkPath := filepath.Join(tmp, "linked.txt")
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  @pin linked.txt:1",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	_, err = BuildL1(compiled, "fixture.task.now")
+	if err == nil {
+		t.Fatalf("expected symlink policy error")
+	}
+	if !strings.Contains(err.Error(), "resolves outside repository root via symlink") {
+		t.Fatalf("expected symlink escape error, got %v", err)
+	}
+}
+
+func TestL1PinWithoutExplicitRangeUsesWholeFile(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "internal", "compile", "parser.go")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	targetBody := strings.Join([]string{
+		"package compile",
+		"",
+		"func Parse() {}",
+	}, "\n")
+	if err := os.WriteFile(targetPath, []byte(targetBody), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  @touches internal/compile/parser.go",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := BuildL1(compiled, "fixture.task.now")
+	if err != nil {
+		t.Fatalf("build L1 packet: %v", err)
+	}
+	if len(packet.Pins) != 1 {
+		t.Fatalf("expected 1 pin extract, got %d", len(packet.Pins))
+	}
+	if packet.Pins[0].StartLine != 1 || packet.Pins[0].EndLine != 3 {
+		t.Fatalf("expected whole-file line range 1-3, got %d-%d", packet.Pins[0].StartLine, packet.Pins[0].EndLine)
+	}
+	if packet.Pins[0].SliceText != targetBody {
+		t.Fatalf("expected whole-file slice text, got %q", packet.Pins[0].SliceText)
+	}
+}
+
+func TestL1PinsIgnoreMetadataInsideFencedCode(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "internal", "compile", "parser.go")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("package compile\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  ```md",
+		"  @pin internal/compile/parser.go:1",
+		"  ```",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := BuildL1(compiled, "fixture.task.now")
+	if err != nil {
+		t.Fatalf("build L1 packet: %v", err)
+	}
+	if len(packet.Pins) != 0 {
+		t.Fatalf("expected no pins extracted from fenced code, got %d", len(packet.Pins))
+	}
+}
+
+func TestL1PinRejectsReversedRange(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "internal", "compile", "parser.go")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("package compile\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  @pin internal/compile/parser.go:3-1",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	_, err = BuildL1(compiled, "fixture.task.now")
+	if err == nil {
+		t.Fatalf("expected invalid range error")
+	}
+	if !strings.Contains(err.Error(), "invalid range") {
+		t.Fatalf("expected invalid range error, got %v", err)
 	}
 }

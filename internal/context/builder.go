@@ -28,10 +28,50 @@ type L0Packet struct {
 	SliceText  string   `json:"slice_text"`
 }
 
+type PinExtract struct {
+	Key        string `json:"key"`
+	TargetPath string `json:"target_path"`
+	StartLine  int    `json:"start_line"`
+	EndLine    int    `json:"end_line"`
+	TargetHash string `json:"target_hash"`
+	SliceText  string `json:"slice_text"`
+}
+
+type L1Packet struct {
+	L0Packet
+	Pins []PinExtract `json:"pins,omitempty"`
+}
+
 func BuildL0(plan ir.PlanIR, taskID string) (L0Packet, error) {
+	task, node, err := resolveTaskAndNode(plan, taskID)
+	if err != nil {
+		return L0Packet{}, err
+	}
+	return buildL0Packet(plan, task, node), nil
+}
+
+func BuildL1(plan ir.PlanIR, taskID string) (L1Packet, error) {
+	task, node, err := resolveTaskAndNode(plan, taskID)
+	if err != nil {
+		return L1Packet{}, err
+	}
+
+	pins, err := extractPinTargets(plan, node)
+	if err != nil {
+		return L1Packet{}, err
+	}
+	base := buildL0Packet(plan, task, node)
+	base.Level = "L1"
+	return L1Packet{
+		L0Packet: base,
+		Pins:     pins,
+	}, nil
+}
+
+func resolveTaskAndNode(plan ir.PlanIR, taskID string) (ir.Task, ir.SourceNode, error) {
 	requestedID := strings.TrimSpace(taskID)
 	if requestedID == "" {
-		return L0Packet{}, fmt.Errorf("%w: empty id", ErrTaskNotFound)
+		return ir.Task{}, ir.SourceNode{}, fmt.Errorf("%w: empty id", ErrTaskNotFound)
 	}
 
 	var task ir.Task
@@ -44,7 +84,7 @@ func BuildL0(plan ir.PlanIR, taskID string) (L0Packet, error) {
 		}
 	}
 	if !foundTask {
-		return L0Packet{}, fmt.Errorf("%w: %s", ErrTaskNotFound, requestedID)
+		return ir.Task{}, ir.SourceNode{}, fmt.Errorf("%w: %s", ErrTaskNotFound, requestedID)
 	}
 
 	nodeByRef := make(map[string]ir.SourceNode, len(plan.Source.Nodes))
@@ -54,11 +94,11 @@ func BuildL0(plan ir.PlanIR, taskID string) (L0Packet, error) {
 
 	node, ok := nodeByRef[task.NodeRef]
 	if !ok {
-		return L0Packet{}, fmt.Errorf("source node missing for task %q (node_ref=%s)", task.ID, task.NodeRef)
+		return ir.Task{}, ir.SourceNode{}, fmt.Errorf("source node missing for task %q (node_ref=%s)", task.ID, task.NodeRef)
 	}
 
 	if strings.EqualFold(strings.TrimSpace(task.Horizon), "now") && !hasNonEmpty(task.Accept) {
-		return L0Packet{}, fmt.Errorf("%w: horizon=now task %q requires at least one @accept", ErrTaskNotReady, task.ID)
+		return ir.Task{}, ir.SourceNode{}, fmt.Errorf("%w: horizon=now task %q requires at least one @accept", ErrTaskNotReady, task.ID)
 	}
 
 	if strings.EqualFold(strings.TrimSpace(task.Horizon), "now") {
@@ -72,11 +112,15 @@ func BuildL0(plan ir.PlanIR, taskID string) (L0Packet, error) {
 				continue
 			}
 			if _, exists := taskByID[depID]; !exists {
-				return L0Packet{}, fmt.Errorf("%w: horizon=now task %q has unresolved dependency %q", ErrTaskNotReady, task.ID, depID)
+				return ir.Task{}, ir.SourceNode{}, fmt.Errorf("%w: horizon=now task %q has unresolved dependency %q", ErrTaskNotReady, task.ID, depID)
 			}
 		}
 	}
 
+	return task, node, nil
+}
+
+func buildL0Packet(plan ir.PlanIR, task ir.Task, node ir.SourceNode) L0Packet {
 	return L0Packet{
 		Level:      "L0",
 		TaskID:     task.ID,
@@ -90,7 +134,7 @@ func BuildL0(plan ir.PlanIR, taskID string) (L0Packet, error) {
 		EndLine:    node.EndLine,
 		SliceHash:  node.SliceHash,
 		SliceText:  node.SliceText,
-	}, nil
+	}
 }
 
 func hasNonEmpty(values []string) bool {

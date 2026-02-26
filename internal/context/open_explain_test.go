@@ -52,3 +52,59 @@ func TestExplainReportsBlockers(t *testing.T) {
 		t.Fatalf("expected suggested metadata to include @accept, got %#v", explained.SuggestedMetadata)
 	}
 }
+
+func TestOpenReturnsExactSlice(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"# Overview",
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	taskResult, err := Open(compiled, "fixture.task.now")
+	if err != nil {
+		t.Fatalf("open by task id: %v", err)
+	}
+	if taskResult.TaskID != "fixture.task.now" {
+		t.Fatalf("expected task id fixture.task.now, got %q", taskResult.TaskID)
+	}
+	if !strings.Contains(taskResult.SliceText, "- [ ] Task now") {
+		t.Fatalf("expected task slice text, got %q", taskResult.SliceText)
+	}
+
+	var headingRef string
+	for _, node := range compiled.Source.Nodes {
+		if node.Kind == "heading" && strings.Contains(node.Text, "Overview") {
+			headingRef = node.NodeRef
+			break
+		}
+	}
+	if headingRef == "" {
+		t.Fatalf("expected to locate heading node_ref")
+	}
+
+	headingResult, err := Open(compiled, headingRef)
+	if err != nil {
+		t.Fatalf("open by node_ref: %v", err)
+	}
+	if headingResult.NodeRef != headingRef {
+		t.Fatalf("expected node_ref %q, got %q", headingRef, headingResult.NodeRef)
+	}
+	if headingResult.TaskID != "" {
+		t.Fatalf("expected empty task id for non-task slice, got %q", headingResult.TaskID)
+	}
+	if strings.TrimSpace(headingResult.SliceText) != "# Overview" {
+		t.Fatalf("expected exact heading slice, got %q", headingResult.SliceText)
+	}
+}
