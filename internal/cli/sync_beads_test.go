@@ -72,6 +72,109 @@ func TestSyncBeadsDryRunDoesNotWriteManifest(t *testing.T) {
 	}
 }
 
+func TestSyncBeadsDryRunJSONIncludesPlannedOps(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync dry-run json",
+		"  @id fixture.task.sync.dry.json",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "--dry-run", "--plan", planPath, "--state-dir", stateDir, "--format", "json", "beads"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload struct {
+		Data struct {
+			DryRun      bool `json:"dry_run"`
+			CreateCount int  `json:"create_count"`
+			PlannedOps  []struct {
+				Kind string `json:"kind"`
+				ID   string `json:"id"`
+			} `json:"planned_ops"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json output: %v output=%q", err, out.String())
+	}
+	if !payload.Data.DryRun {
+		t.Fatalf("expected dry_run=true in payload, got %s", out.String())
+	}
+	if payload.Data.CreateCount != 1 {
+		t.Fatalf("expected create_count=1 in dry-run payload, got %s", out.String())
+	}
+	if len(payload.Data.PlannedOps) != 1 {
+		t.Fatalf("expected a single planned op, got %s", out.String())
+	}
+	if payload.Data.PlannedOps[0].Kind != "create" {
+		t.Fatalf("expected create planned op, got %s", out.String())
+	}
+	if payload.Data.PlannedOps[0].ID != "fixture.task.sync.dry.json" {
+		t.Fatalf("expected planned op id fixture.task.sync.dry.json, got %s", out.String())
+	}
+}
+
+func TestSyncBeadsDryRunTextIncludesPlannedOps(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync dry-run text",
+		"  @id fixture.task.sync.dry.text",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "--dry-run", "--plan", planPath, "--state-dir", stateDir, "--format", "text", "beads"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "planned_ops:\n") {
+		t.Fatalf("expected planned_ops block in text output, got %q", output)
+	}
+	if !strings.Contains(output, "- create fixture.task.sync.dry.text (") {
+		t.Fatalf("expected create planned op in text output, got %q", output)
+	}
+}
+
+func TestSyncBeadsJSONOmitsPlannedOpsWithoutDryRun(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync no dry-run",
+		"  @id fixture.task.sync.no_dry_run",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "--plan", planPath, "--state-dir", stateDir, "--format", "json", "beads"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if strings.Contains(out.String(), "\"planned_ops\"") {
+		t.Fatalf("expected planned_ops to be omitted without --dry-run, got %q", out.String())
+	}
+}
+
 func TestSyncBeadsAcceptsTargetBeforeFlags(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")

@@ -201,14 +201,18 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	ops := syncplanner.PlanSyncOps(desired, prior, resolvedDeletionPolicy)
-	result.PlannedOps = make([]syncPreviewOperation, 0, len(ops))
+	if *dryRun {
+		result.PlannedOps = make([]syncPreviewOperation, 0, len(ops))
+	}
 	for _, op := range ops {
 		opID := journal.SyncOperationID(op)
-		result.PlannedOps = append(result.PlannedOps, syncPreviewOperation{
-			Kind:   string(op.Kind),
-			ID:     op.ID,
-			Reason: op.Reason,
-		})
+		if *dryRun {
+			result.PlannedOps = append(result.PlannedOps, syncPreviewOperation{
+				Kind:   string(op.Kind),
+				ID:     op.ID,
+				Reason: op.Reason,
+			})
+		}
 		switch op.Kind {
 		case syncplanner.OperationCreate:
 			result.CreateCount++

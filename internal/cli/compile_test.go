@@ -87,3 +87,42 @@ func TestCompileOutFlagBeforePositionalPlan(t *testing.T) {
 		t.Fatalf("expected output file at %q: %v", outPath, err)
 	}
 }
+
+func TestCompileWritesManifestWhenStateDirProvided(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark-state")
+	if err := os.WriteFile(planPath, []byte("- [ ] Task A\n  @id fixture.task.a\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"compile", "--plan", planPath, "--state-dir", stateDir}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	manifestPath := filepath.Join(stateDir, "build", "compile-manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("expected compile manifest at %q: %v", manifestPath, err)
+	}
+}
+
+func TestCompileGitDiffHintsAreAdvisoryOnly(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	if err := os.WriteFile(planPath, []byte("- [ ] Task A\n  @id fixture.task.a\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"compile", "--plan", planPath, "--git-diff-hints"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "\"tasks\"") {
+		t.Fatalf("expected compile output json, got %q", out.String())
+	}
+}
