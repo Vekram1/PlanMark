@@ -149,6 +149,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "load sync manifest: %v\n", err)
 		return protocol.ExitInternalError
 	}
+	adapter.SeedFromSyncManifest(priorManifest)
 
 	result := syncBeadsResult{
 		Target:         "beads",

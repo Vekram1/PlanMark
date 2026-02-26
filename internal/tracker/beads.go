@@ -63,6 +63,19 @@ func NewBeadsAdapter() *BeadsAdapter {
 	}
 }
 
+func (a *BeadsAdapter) SeedFromSyncManifest(manifest BeadsSyncManifest) {
+	for _, entry := range manifest.Entries {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" {
+			continue
+		}
+		a.remoteIDByID[id] = strings.TrimSpace(entry.RemoteID)
+		a.projectionHashByID[id] = strings.TrimSpace(entry.ProjectionHash)
+		a.sourceHashByID[id] = strings.TrimSpace(entry.SourceHash)
+		a.lastSeenRuntime[id] = strings.TrimSpace(entry.LastSeenRuntimeHash)
+	}
+}
+
 func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error) {
 	if strings.TrimSpace(task.ID) == "" {
 		return BeadsProjectionPayload{}, fmt.Errorf("task projection requires non-empty id")

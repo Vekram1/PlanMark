@@ -79,13 +79,31 @@ type Operation struct {
 func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionPolicy DeletionPolicy) []Operation {
 	desiredByID := make(map[string]DesiredProjection, len(desired))
 	ops := make([]Operation, 0, len(desired)+len(prior))
-
+	desiredHashesByID := make(map[string][]string, len(desired))
 	for _, d := range desired {
 		id := strings.TrimSpace(d.ID)
 		if id == "" {
 			continue
 		}
-		hash := strings.TrimSpace(d.ProjectionHash)
+		desiredHashesByID[id] = append(desiredHashesByID[id], strings.TrimSpace(d.ProjectionHash))
+	}
+	desiredIDs := make([]string, 0, len(desiredHashesByID))
+	for id := range desiredHashesByID {
+		desiredIDs = append(desiredIDs, id)
+	}
+	sort.Strings(desiredIDs)
+	for _, id := range desiredIDs {
+		hashes := desiredHashesByID[id]
+		if len(hashes) > 1 {
+			ops = append(ops, Operation{
+				Kind:     OperationConflict,
+				ID:       id,
+				Reason:   "duplicate desired id",
+				Priority: 0,
+			})
+			continue
+		}
+		hash := hashes[0]
 		if hash == "" {
 			ops = append(ops, Operation{
 				Kind:     OperationConflict,
@@ -95,25 +113,25 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 			})
 			continue
 		}
-		if _, exists := desiredByID[id]; exists {
-			ops = append(ops, Operation{
-				Kind:     OperationConflict,
-				ID:       id,
-				Reason:   "duplicate desired id",
-				Priority: 0,
-			})
-			continue
-		}
 		desiredByID[id] = DesiredProjection{ID: id, ProjectionHash: hash}
 	}
-
 	priorByID := make(map[string]PriorProjection, len(prior))
+	priorHashesByID := make(map[string][]string, len(prior))
 	for _, p := range prior {
 		id := strings.TrimSpace(p.ID)
 		if id == "" {
 			continue
 		}
-		if _, exists := priorByID[id]; exists {
+		priorHashesByID[id] = append(priorHashesByID[id], strings.TrimSpace(p.ProjectionHash))
+	}
+	priorIDs := make([]string, 0, len(priorHashesByID))
+	for id := range priorHashesByID {
+		priorIDs = append(priorIDs, id)
+	}
+	sort.Strings(priorIDs)
+	for _, id := range priorIDs {
+		hashes := priorHashesByID[id]
+		if len(hashes) > 1 {
 			ops = append(ops, Operation{
 				Kind:     OperationConflict,
 				ID:       id,
@@ -124,7 +142,7 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 		}
 		priorByID[id] = PriorProjection{
 			ID:             id,
-			ProjectionHash: strings.TrimSpace(p.ProjectionHash),
+			ProjectionHash: hashes[0],
 		}
 	}
 

@@ -96,3 +96,41 @@ func TestBeadsSyncPlannerStableOps(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanSyncOpsDuplicateDesiredIsDeterministicAndConflicted(t *testing.T) {
+	prior := []PriorProjection{{ID: "task.same", ProjectionHash: "h.prior"}}
+
+	gotA := PlanSyncOps(
+		[]DesiredProjection{
+			{ID: "task.same", ProjectionHash: "h.new.1"},
+			{ID: "task.same", ProjectionHash: "h.new.2"},
+		},
+		prior,
+		DeletionPolicyMarkStale,
+	)
+	gotB := PlanSyncOps(
+		[]DesiredProjection{
+			{ID: "task.same", ProjectionHash: "h.new.2"},
+			{ID: "task.same", ProjectionHash: "h.new.1"},
+		},
+		prior,
+		DeletionPolicyMarkStale,
+	)
+
+	if !reflect.DeepEqual(gotA, gotB) {
+		t.Fatalf("expected deterministic result for duplicate desired ids regardless of input order\nA=%#v\nB=%#v", gotA, gotB)
+	}
+
+	conflicts := 0
+	for _, op := range gotA {
+		if op.Kind == OperationConflict && op.ID == "task.same" {
+			conflicts++
+		}
+		if op.Kind == OperationCreate || op.Kind == OperationUpdate || op.Kind == OperationNoop {
+			t.Fatalf("did not expect non-conflict op for duplicate desired id; got %#v", gotA)
+		}
+	}
+	if conflicts != 1 {
+		t.Fatalf("expected exactly one conflict for duplicate desired id, got %d (%#v)", conflicts, gotA)
+	}
+}

@@ -154,3 +154,65 @@ func TestSyncBeadsRejectsInvalidDeletionPolicy(t *testing.T) {
 		t.Fatalf("expected invalid policy message, got %q", errOut.String())
 	}
 }
+
+func TestSyncBeadsPreservesNoopEntriesAcrossRuns(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync stable",
+		"  @id fixture.task.sync.stable",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected first run exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	exit = Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected second run exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload struct {
+		Data struct {
+			NoopCount    int `json:"noop_count"`
+			TasksMutated int `json:"tasks_mutated"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode second run output: %v output=%q", err, out.String())
+	}
+	if payload.Data.NoopCount == 0 {
+		t.Fatalf("expected second run to include noop count, got payload=%s", out.String())
+	}
+	if payload.Data.TasksMutated != 0 {
+		t.Fatalf("expected second run to avoid mutations for unchanged plan, got payload=%s", out.String())
+	}
+
+	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest struct {
+		Entries []struct {
+			ID string `json:"id"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if len(manifest.Entries) != 1 || manifest.Entries[0].ID != "fixture.task.sync.stable" {
+		t.Fatalf("expected manifest to preserve existing noop entry, got %s", string(raw))
+	}
+}
