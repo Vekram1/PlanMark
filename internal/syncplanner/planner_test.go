@@ -3,6 +3,8 @@ package syncplanner
 import (
 	"reflect"
 	"testing"
+
+	"github.com/vikramoddiraju/planmark/internal/tracker"
 )
 
 func TestBeadsDeletionPolicyDefaultMarkStale(t *testing.T) {
@@ -132,5 +134,89 @@ func TestPlanSyncOpsDuplicateDesiredIsDeterministicAndConflicted(t *testing.T) {
 	}
 	if conflicts != 1 {
 		t.Fatalf("expected exactly one conflict for duplicate desired id, got %d (%#v)", conflicts, gotA)
+	}
+}
+
+func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
+	desired := []DesiredProjection{
+		{
+			ID:             "task.same",
+			ProjectionHash: "h.new",
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    "plan.md|checkbox|new#1",
+				Path:       "plan.md",
+				StartLine:  11,
+				EndLine:    11,
+				SourceHash: "newhash",
+				CompileID:  "compile-new",
+			},
+		},
+	}
+	prior := []PriorProjection{
+		{
+			ID:             "task.same",
+			ProjectionHash: "h.old",
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    "plan.md|checkbox|old#1",
+				Path:       "plan.md",
+				StartLine:  7,
+				EndLine:    7,
+				SourceHash: "oldhash",
+				CompileID:  "compile-old",
+			},
+		},
+	}
+
+	ops := PlanSyncOps(desired, prior, DeletionPolicyMarkStale)
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %#v", ops)
+	}
+	if ops[0].Kind != OperationMarkStale {
+		t.Fatalf("expected mark-stale op, got %#v", ops[0])
+	}
+	if ops[0].ID != "task.same" {
+		t.Fatalf("expected task.same op, got %#v", ops[0])
+	}
+	if ops[0].Reason == "" || ops[0].Reason == "present in prior projection set but missing in desired" {
+		t.Fatalf("expected explicit provenance mismatch reason, got %#v", ops[0])
+	}
+}
+
+func TestBeadCompileIDDifferenceDoesNotMarkStale(t *testing.T) {
+	desired := []DesiredProjection{
+		{
+			ID:             "task.same",
+			ProjectionHash: "h.same",
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    "plan.md|checkbox|same#1",
+				Path:       "plan.md",
+				StartLine:  11,
+				EndLine:    11,
+				SourceHash: "samehash",
+				CompileID:  "compile-new",
+			},
+		},
+	}
+	prior := []PriorProjection{
+		{
+			ID:             "task.same",
+			ProjectionHash: "h.same",
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    "plan.md|checkbox|same#1",
+				Path:       "plan.md",
+				StartLine:  11,
+				EndLine:    11,
+				SourceHash: "samehash",
+				CompileID:  "compile-old",
+			},
+		},
+	}
+
+	ops := PlanSyncOps(desired, prior, DeletionPolicyMarkStale)
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %#v", ops)
+	}
+	if ops[0].Kind != OperationNoop {
+		t.Fatalf("expected noop when only compile id differs, got %#v", ops[0])
 	}
 }

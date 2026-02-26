@@ -62,11 +62,13 @@ const (
 type DesiredProjection struct {
 	ID             string
 	ProjectionHash string
+	Provenance     tracker.TaskProvenance
 }
 
 type PriorProjection struct {
 	ID             string
 	ProjectionHash string
+	Provenance     tracker.TaskProvenance
 }
 
 type Operation struct {
@@ -80,12 +82,16 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 	desiredByID := make(map[string]DesiredProjection, len(desired))
 	ops := make([]Operation, 0, len(desired)+len(prior))
 	desiredHashesByID := make(map[string][]string, len(desired))
+	desiredProvenanceByID := make(map[string]tracker.TaskProvenance, len(desired))
 	for _, d := range desired {
 		id := strings.TrimSpace(d.ID)
 		if id == "" {
 			continue
 		}
 		desiredHashesByID[id] = append(desiredHashesByID[id], strings.TrimSpace(d.ProjectionHash))
+		if _, exists := desiredProvenanceByID[id]; !exists {
+			desiredProvenanceByID[id] = d.Provenance
+		}
 	}
 	desiredIDs := make([]string, 0, len(desiredHashesByID))
 	for id := range desiredHashesByID {
@@ -113,16 +119,20 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 			})
 			continue
 		}
-		desiredByID[id] = DesiredProjection{ID: id, ProjectionHash: hash}
+		desiredByID[id] = DesiredProjection{ID: id, ProjectionHash: hash, Provenance: desiredProvenanceByID[id]}
 	}
 	priorByID := make(map[string]PriorProjection, len(prior))
 	priorHashesByID := make(map[string][]string, len(prior))
+	priorProvenanceByID := make(map[string]tracker.TaskProvenance, len(prior))
 	for _, p := range prior {
 		id := strings.TrimSpace(p.ID)
 		if id == "" {
 			continue
 		}
 		priorHashesByID[id] = append(priorHashesByID[id], strings.TrimSpace(p.ProjectionHash))
+		if _, exists := priorProvenanceByID[id]; !exists {
+			priorProvenanceByID[id] = p.Provenance
+		}
 	}
 	priorIDs := make([]string, 0, len(priorHashesByID))
 	for id := range priorHashesByID {
@@ -143,6 +153,7 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 		priorByID[id] = PriorProjection{
 			ID:             id,
 			ProjectionHash: hashes[0],
+			Provenance:     priorProvenanceByID[id],
 		}
 	}
 
@@ -165,6 +176,17 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 				Priority: 0,
 			})
 			continue
+		}
+		if provenanceComparable(p.Provenance) && provenanceComparable(d.Provenance) {
+			if mismatch := provenanceMismatchReason(p.Provenance, d.Provenance); mismatch != "" {
+				ops = append(ops, Operation{
+					Kind:     OperationMarkStale,
+					ID:       id,
+					Reason:   "stale provenance mismatch: " + mismatch,
+					Priority: 2,
+				})
+				continue
+			}
 		}
 		if p.ProjectionHash == d.ProjectionHash {
 			ops = append(ops, Operation{
@@ -225,4 +247,29 @@ func ProjectionHashForTask(task tracker.TaskProjection) (string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func provenanceComparable(p tracker.TaskProvenance) bool {
+	return strings.TrimSpace(p.NodeRef) != "" &&
+		strings.TrimSpace(p.Path) != "" &&
+		p.StartLine > 0 &&
+		p.EndLine >= p.StartLine &&
+		strings.TrimSpace(p.SourceHash) != ""
+}
+
+func provenanceMismatchReason(prior tracker.TaskProvenance, desired tracker.TaskProvenance) string {
+	diffs := make([]string, 0, 6)
+	if strings.TrimSpace(prior.NodeRef) != strings.TrimSpace(desired.NodeRef) {
+		diffs = append(diffs, "node_ref")
+	}
+	if strings.TrimSpace(prior.Path) != strings.TrimSpace(desired.Path) {
+		diffs = append(diffs, "path")
+	}
+	if prior.StartLine != desired.StartLine || prior.EndLine != desired.EndLine {
+		diffs = append(diffs, "range")
+	}
+	if strings.TrimSpace(prior.SourceHash) != strings.TrimSpace(desired.SourceHash) {
+		diffs = append(diffs, "source_hash")
+	}
+	return strings.Join(diffs, ",")
 }
