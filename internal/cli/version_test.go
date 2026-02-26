@@ -34,6 +34,40 @@ func TestVersionJSONContainsCapabilities(t *testing.T) {
 	if _, ok := data["supported_policy_versions"].([]any); !ok {
 		t.Fatalf("missing supported_policy_versions in payload data: %v", data)
 	}
+	if _, ok := data["exit_code_taxonomy"].([]any); !ok {
+		t.Fatalf("missing exit_code_taxonomy in payload data: %v", data)
+	}
+	policies := data["supported_policy_versions"].([]any)
+	foundDeterminism := false
+	for _, item := range policies {
+		p, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := p["name"].(string); name == "determinism" {
+			foundDeterminism = true
+			break
+		}
+	}
+	if !foundDeterminism {
+		t.Fatalf("expected determinism policy from registry, got: %v", policies)
+	}
+	foundUsageError := false
+	for _, item := range data["exit_code_taxonomy"].([]any) {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := entry["name"].(string); name == "usage_error" {
+			if code, _ := entry["code"].(float64); int(code) == 2 {
+				foundUsageError = true
+				break
+			}
+		}
+	}
+	if !foundUsageError {
+		t.Fatalf("expected usage_error exit code entry in taxonomy, got: %v", data["exit_code_taxonomy"])
+	}
 }
 
 func TestVersionHelpReturnsZeroAndShowsUsage(t *testing.T) {

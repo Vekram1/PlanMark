@@ -113,9 +113,20 @@ func WriteContextPacket(stateDir string, key string, payload []byte) (string, er
 	if err != nil {
 		return "", err
 	}
+	lock, err := AcquireLock(stateDir, "context-packet")
+	if err != nil {
+		return "", fmt.Errorf("acquire cache lock: %w", err)
+	}
+	defer func() {
+		_ = lock.Release()
+	}()
 	if err := fsio.WriteFileAtomic(cachePath, payload, 0o644); err != nil {
 		return "", fmt.Errorf("write context cache packet: %w", err)
 	}
+	if err := lock.Release(); err != nil {
+		return "", fmt.Errorf("release cache lock: %w", err)
+	}
+	lock = nil
 	return cachePath, nil
 }
 

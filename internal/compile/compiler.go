@@ -24,12 +24,23 @@ type CompiledNode struct {
 }
 
 func CompileNodes(planPath string, content []byte, parser *Parser) ([]CompiledNode, error) {
+	return compileNodesWithLimits(planPath, content, parser, DefaultLimits())
+}
+
+func compileNodesWithLimits(planPath string, content []byte, parser *Parser, limits Limits) ([]CompiledNode, error) {
 	if parser == nil {
 		parser = NewParser(nil)
+	}
+	limits = limits.normalized()
+	if err := limits.validateContent(planPath, content); err != nil {
+		return nil, err
 	}
 
 	nodes, err := parser.Parse(planPath, content)
 	if err != nil {
+		return nil, err
+	}
+	if err := limits.validateNodeCount(planPath, nodes); err != nil {
 		return nil, err
 	}
 
@@ -57,7 +68,11 @@ func CompileNodes(planPath string, content []byte, parser *Parser) ([]CompiledNo
 }
 
 func CompilePlan(planPath string, content []byte, parser *Parser) (ir.PlanIR, error) {
-	compiled, err := CompileNodes(planPath, content, parser)
+	return compilePlanWithLimits(planPath, content, parser, DefaultLimits())
+}
+
+func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limits Limits) (ir.PlanIR, error) {
+	compiled, err := compileNodesWithLimits(planPath, content, parser, limits)
 	if err != nil {
 		return ir.PlanIR{}, err
 	}
@@ -68,6 +83,10 @@ func CompilePlan(planPath string, content []byte, parser *Parser) (ir.PlanIR, er
 	attachments := AttachMetadataToNodes(extractNodes(compiled), metadata)
 	if len(attachments.Nodes) != len(compiled) {
 		return ir.PlanIR{}, fmt.Errorf("attachment/node count mismatch: attachments=%d compiled=%d", len(attachments.Nodes), len(compiled))
+	}
+	limits = limits.normalized()
+	if err := limits.validateMetadataPerNode(planPath, attachments); err != nil {
+		return ir.PlanIR{}, err
 	}
 
 	occurrenceByBaseRef := make(map[string]int)

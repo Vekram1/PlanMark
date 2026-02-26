@@ -1,6 +1,8 @@
 package compile
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -235,5 +237,94 @@ func TestSourceCoverageEmptyContent(t *testing.T) {
 	}
 	if len(coverage.Interpreted) != 0 || len(coverage.Opaque) != 0 {
 		t.Fatalf("expected no coverage ranges for empty content, got interpreted=%v opaque=%v", coverage.Interpreted, coverage.Opaque)
+	}
+}
+
+func TestLimitsDeterministic(t *testing.T) {
+	cases := []struct {
+		name       string
+		content    string
+		limits     Limits
+		wantKind   LimitKind
+		wantLine   int
+		wantActual int
+		wantLimit  int
+	}{
+		{
+			name:       "max file bytes",
+			content:    strings.Repeat("a", 128),
+			limits:     Limits{MaxFileBytes: 64, MaxLineBytes: 1024, MaxNodes: 100, MaxMetadataLinesPerNode: 10},
+			wantKind:   LimitKindFileBytes,
+			wantLine:   0,
+			wantActual: 128,
+			wantLimit:  64,
+		},
+		{
+			name:       "max line bytes",
+			content:    "# " + strings.Repeat("a", 100) + "\n",
+			limits:     Limits{MaxFileBytes: 1024, MaxLineBytes: 16, MaxNodes: 100, MaxMetadataLinesPerNode: 10},
+			wantKind:   LimitKindLineBytes,
+			wantLine:   1,
+			wantActual: 102,
+			wantLimit:  16,
+		},
+		{
+			name: "max nodes",
+			content: strings.Join([]string{
+				"# one",
+				"# two",
+				"# three",
+			}, "\n"),
+			limits:     Limits{MaxFileBytes: 1024, MaxLineBytes: 1024, MaxNodes: 2, MaxMetadataLinesPerNode: 10},
+			wantKind:   LimitKindNodeCount,
+			wantLine:   0,
+			wantActual: 3,
+			wantLimit:  2,
+		},
+		{
+			name: "max metadata lines per node",
+			content: strings.Join([]string{
+				"- [ ] task one",
+				"@id task.one",
+				"@horizon now",
+				"@accept cmd:go test ./...",
+			}, "\n"),
+			limits:     Limits{MaxFileBytes: 1024, MaxLineBytes: 1024, MaxNodes: 100, MaxMetadataLinesPerNode: 2},
+			wantKind:   LimitKindMetadataPerNodeLines,
+			wantLine:   1,
+			wantActual: 3,
+			wantLimit:  2,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			parser := NewParser(nil)
+			const planPath = "limits.md"
+
+			_, errA := compilePlanWithLimits(planPath, []byte(tc.content), parser, tc.limits)
+			_, errB := compilePlanWithLimits(planPath, []byte(tc.content), parser, tc.limits)
+			if errA == nil || errB == nil {
+				t.Fatalf("expected deterministic limit errors, got errA=%v errB=%v", errA, errB)
+			}
+			if errA.Error() != errB.Error() {
+				t.Fatalf("expected deterministic error text, got A=%q B=%q", errA.Error(), errB.Error())
+			}
+
+			var got *LimitError
+			if !errors.As(errA, &got) {
+				t.Fatalf("expected *LimitError, got %T (%v)", errA, errA)
+			}
+			if got.Kind != tc.wantKind || got.Line != tc.wantLine || got.Actual != tc.wantActual || got.Limit != tc.wantLimit {
+				t.Fatalf("unexpected limit error fields: got=%+v want kind=%s line=%d actual=%d limit=%d",
+					got, tc.wantKind, tc.wantLine, tc.wantActual, tc.wantLimit)
+			}
+
+			wantText := fmt.Sprintf("compile limit exceeded: kind=%s path=%s", tc.wantKind, planPath)
+			if !strings.Contains(got.Error(), wantText) {
+				t.Fatalf("expected explicit limit prefix in error text, got %q", got.Error())
+			}
+		})
 	}
 }

@@ -111,6 +111,99 @@ func TestParserSupportsLongLines(t *testing.T) {
 	}
 }
 
+func TestParserBackendConformance(t *testing.T) {
+	base := filepath.Join("..", "..", "testdata", "conformance")
+
+	mixedWant := []string{
+		"heading|1|1|Plan",
+		"checkbox|3|0|first task",
+		"heading|8|2|Phase 1",
+		"checkbox|9|1|done task",
+		"checkbox|10|0|next task",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		fixture string
+		want    []string
+	}{
+		{
+			name:    "mixed-lf",
+			fixture: "parser_mixed_lf.md",
+			want:    mixedWant,
+		},
+		{
+			name:    "mixed-crlf",
+			fixture: "parser_mixed_crlf.md",
+			want:    mixedWant,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := os.ReadFile(filepath.Join(base, tc.fixture))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+
+			nodes, err := NewParser(NewMarkdownLineBackend()).Parse(tc.fixture, content)
+			if err != nil {
+				t.Fatalf("parse fixture: %v", err)
+			}
+
+			got := nodeSignatures(nodes)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("conformance mismatch for %s\nwant:\n%s\ngot:\n%s", tc.fixture, strings.Join(tc.want, "\n"), strings.Join(got, "\n"))
+			}
+		})
+	}
+
+	nfcContent, err := os.ReadFile(filepath.Join(base, "unicode_nfc.md"))
+	if err != nil {
+		t.Fatalf("read unicode_nfc fixture: %v", err)
+	}
+	nfdContent, err := os.ReadFile(filepath.Join(base, "unicode_nfd.md"))
+	if err != nil {
+		t.Fatalf("read unicode_nfd fixture: %v", err)
+	}
+
+	nfcNodes, err := NewParser(NewMarkdownLineBackend()).Parse("unicode_nfc.md", nfcContent)
+	if err != nil {
+		t.Fatalf("parse unicode_nfc fixture: %v", err)
+	}
+	nfdNodes, err := NewParser(NewMarkdownLineBackend()).Parse("unicode_nfd.md", nfdContent)
+	if err != nil {
+		t.Fatalf("parse unicode_nfd fixture: %v", err)
+	}
+
+	if len(nfcNodes) != 2 || len(nfdNodes) != 2 {
+		t.Fatalf("expected 2 nodes for unicode fixtures, got nfc=%d nfd=%d", len(nfcNodes), len(nfdNodes))
+	}
+	if nfcNodes[0].Text == nfdNodes[0].Text {
+		t.Fatalf("expected Unicode forms to remain distinct; got equal heading text %q", nfcNodes[0].Text)
+	}
+	if nfcNodes[1].Text == nfdNodes[1].Text {
+		t.Fatalf("expected Unicode forms to remain distinct; got equal checkbox text %q", nfcNodes[1].Text)
+	}
+}
+
+func nodeSignatures(nodes []Node) []string {
+	out := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		switch n.Kind {
+		case NodeKindHeading:
+			out = append(out, "heading|"+itoa(n.Line)+"|"+itoa(n.Level)+"|"+n.Text)
+		case NodeKindCheckbox:
+			checked := "0"
+			if n.Checked {
+				checked = "1"
+			}
+			out = append(out, "checkbox|"+itoa(n.Line)+"|"+checked+"|"+n.Text)
+		default:
+			out = append(out, "unknown|"+itoa(n.Line)+"|"+string(n.Kind)+"|"+n.Text)
+		}
+	}
+	return out
+}
+
 func splitNonEmptyLines(s string) []string {
 	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
 	out := make([]string, 0, len(lines))

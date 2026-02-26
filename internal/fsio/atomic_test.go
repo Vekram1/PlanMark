@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestWriteFileAtomicCreatesAndReplaces(t *testing.T) {
+func TestAtomicWrite(t *testing.T) {
 	tmp := t.TempDir()
 	target := filepath.Join(tmp, "sync", "manifest.json")
 

@@ -105,6 +105,24 @@ L0 execution packet default requirements for `@horizon now`:
 - `Exec`: enforce strict L0 execution readiness for `horizon=now`.
 - `CI` (future): repository-configured policy promotion (warn->error) with explicit versioning.
 
+## Strictness Matrix (v0.1)
+
+This matrix makes strictness explicit at command boundaries rather than parser entry.
+
+| Command | Loose (default) | Build | Exec | CI (future profile hook) |
+| --- | --- | --- | --- | --- |
+| `plan compile` | Tolerant parse; preserve unknowns and unattached metadata with diagnostics; produce IR whenever possible | Same tolerance; may elevate structural graph issues to stronger diagnostics without dropping source coverage | Same as Build for extraction behavior | Repo-configurable severity promotion only; no nondeterministic behavior |
+| `plan doctor` | Report issues with warnings for underspecified `next/later` work | Enforce ID uniqueness, dep resolvability, cycle checks, metadata shape sanity | Includes Build checks plus execution-readiness framing for `horizon=now` | Policy-driven warn->error promotion with versioned config |
+| `plan context --level L0` | Allowed, but blocks execution packet generation for `horizon=now` tasks missing readiness requirements | Same as Loose with stronger diagnostics on missing/invalid readiness fields | Strict gate: requires `@id`, `@accept`, resolvable `@deps`, and required L0 references | Same as Exec plus repo policy overlays |
+| `plan context --level L1/L2` | Tolerant packet generation with freshness/diagnostic signaling | Same | Same extraction tolerance; strictness remains L0-only for execution gating | Same |
+| `plan open` / `plan explain` | Always retrieval/diagnostic focused; never mutates canonical state | Same | Same | Same |
+| `plan sync beads --dry-run` | Deterministic reconcile planning; non-destructive preview | Same with stronger conflict/drift surfacing | Same | Same with repo policy severity mapping |
+| `plan sync beads` apply | Uses same deterministic operation plan as dry-run; destructive operations remain opt-in by deletion policy | Same | Same | Same with explicit policy gates |
+
+Notes:
+- Parsing tolerance is invariant across profiles; profiles mainly control diagnostic severity and execution/apply gating.
+- Strict execution gating is intentionally limited to L0 `horizon=now` packet semantics.
+
 ## Tracker Authority Split
 
 - PLAN/IR defines structure and intent.
@@ -117,17 +135,34 @@ L0 execution packet default requirements for `@horizon now`:
 - VCS diff context is advisory only.
 - Identity defaults to `@id`; ID changes are delete+add unless explicit identity-evolution annotations are defined by policy.
 
+## Change Detection Policy Link
+
+- Source of change detection rules: `docs/specs/change-detection-v0.1.md`
+- Policy identifier: `change_detection/v0.1`
+- Contract: deterministic semantic change classifications come from semantic fingerprints/IR deltas; VCS data is hint-only.
+
+## Tracker Reconcile Policy Link
+
+- Source of tracker reconcile rules: `docs/specs/tracker-reconcile-v0.1.md`
+- Policy identifier: `tracker_reconcile/v0.1`
+- Contract: PLAN remains canonical for structure/intent; tracker runtime fields are merged under explicit safe-pull rules.
+
 ## Semantic Derivation Policy Link
 
 - Source of semantic derivation rules: `docs/specs/semantic-derivation-v0.1.md`
 - Policy identifier: `semantic_derivation/v0.1`
 - Contract: identical Source IR bytes + identical semantic policy version produce byte-stable Semantic IR.
 
-## Machine Protocol Requirements
+## Machine Protocol Contract (v0.1)
 
 - Commands exposing machine output emit a stable, versioned JSON envelope.
 - Diagnostics use stable code enums and stable ordering.
 - Exit code taxonomy is documented and stable for machine branching.
+- Core exit codes:
+  - `0`: success
+  - `1`: validation/readiness failure
+  - `2`: usage/flag error
+  - `3`: internal error
 
 ## Non-Goals for This Draft
 

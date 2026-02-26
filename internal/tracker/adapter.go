@@ -6,10 +6,12 @@ import "context"
 type TaskProjection struct {
 	ID                string
 	Title             string
+	Anchor            string
 	SourcePath        string
 	SourceStartLine   int
 	SourceEndLine     int
 	SourceHash        string
+	Accept            []string
 	ProjectionVersion string
 }
 

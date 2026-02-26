@@ -26,6 +26,10 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = tmp.Close()
 		return fmt.Errorf("write temp file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync temp file: %w", err)
+	}
 	if err := tmp.Chmod(perm); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("chmod temp file: %w", err)
@@ -35,6 +39,15 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	parent, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("open parent directory: %w", err)
+	}
+	defer parent.Close()
+	if err := parent.Sync(); err != nil {
+		return fmt.Errorf("sync parent directory: %w", err)
 	}
 	return nil
 }
