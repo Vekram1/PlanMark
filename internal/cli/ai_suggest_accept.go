@@ -26,7 +26,7 @@ type suggestAcceptResult struct {
 func runAI(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: plan ai <subcommand> [args]")
-		fmt.Fprintln(stderr, "subcommands: suggest-accept, summarize-closure")
+		fmt.Fprintln(stderr, "subcommands: suggest-accept, summarize-closure, draft-beads")
 		return protocol.ExitUsageError
 	}
 
@@ -35,6 +35,8 @@ func runAI(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runAISuggestAccept(args[1:], stdout, stderr)
 	case "summarize-closure":
 		return runAISummarizeClosure(args[1:], stdout, stderr)
+	case "draft-beads":
+		return runAIDraftBeads(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown ai command: %s\n", args[0])
 		return protocol.ExitUsageError

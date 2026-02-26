@@ -99,7 +99,7 @@ func TestAISuggestAcceptMissingTaskReturnsValidationFailure(t *testing.T) {
 func TestAIUnknownSubcommandReturnsUsageError(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	exit := Run([]string{"ai", "draft-beads"}, &out, &errOut)
+	exit := Run([]string{"ai", "unknown-subcommand"}, &out, &errOut)
 	if exit != protocol.ExitUsageError {
 		t.Fatalf("expected usage error, got %d stderr=%q", exit, errOut.String())
 	}
