@@ -135,3 +135,92 @@ func TestDoctorJSONOutputUsesProtocolEnvelope(t *testing.T) {
 		t.Fatalf("expected object data payload, got %T", payload["data"])
 	}
 }
+
+func TestDoctorFixOutDeterministic(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id task.now",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	outA := filepath.Join(tmp, "delta-a.json")
+	outB := filepath.Join(tmp, "delta-b.json")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exit := Run([]string{"doctor", "--plan", planPath, "--profile", "exec", "--fix-out", outA}, &stdout, &stderr)
+	if exit != 1 {
+		t.Fatalf("expected validation failure exit, got %d stderr=%q", exit, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	exit = Run([]string{"doctor", "--plan", planPath, "--profile", "exec", "--fix-out", outB}, &stdout, &stderr)
+	if exit != 1 {
+		t.Fatalf("expected validation failure exit on second run, got %d stderr=%q", exit, stderr.String())
+	}
+
+	rawA, err := os.ReadFile(outA)
+	if err != nil {
+		t.Fatalf("read first fix-out: %v", err)
+	}
+	rawB, err := os.ReadFile(outB)
+	if err != nil {
+		t.Fatalf("read second fix-out: %v", err)
+	}
+	if string(rawA) != string(rawB) {
+		t.Fatalf("expected deterministic fix-out bytes\nA:\n%s\nB:\n%s", string(rawA), string(rawB))
+	}
+	if !strings.Contains(string(rawA), "\"@accept cmd:<command>\"") {
+		t.Fatalf("expected missing-accept suggestion in fix-out: %s", string(rawA))
+	}
+}
+
+func TestDoctorCompileLimitFailureIsDiagnostic(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	line := strings.Repeat("x", 300*1024)
+	if err := os.WriteFile(planPath, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"doctor", "--plan", planPath, "--format", "text"}, &out, &errOut)
+	if exit != 1 {
+		t.Fatalf("expected validation failure exit, got %d stderr=%q output=%q", exit, errOut.String(), out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("expected empty stderr for diagnostic-form compile limits, got %q", errOut.String())
+	}
+	if !strings.Contains(out.String(), "COMPILE_LIMIT_EXCEEDED") {
+		t.Fatalf("expected COMPILE_LIMIT_EXCEEDED diagnostic, got %q", out.String())
+	}
+}
+
+func TestDoctorInvalidProfilePrecedenceOverCompileLimit(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	line := strings.Repeat("x", 300*1024)
+	if err := os.WriteFile(planPath, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"doctor", "--plan", planPath, "--profile", "strictest"}, &out, &errOut)
+	if exit != 2 {
+		t.Fatalf("expected usage error exit for invalid profile, got %d stderr=%q output=%q", exit, errOut.String(), out.String())
+	}
+	if !strings.Contains(errOut.String(), "invalid profile") {
+		t.Fatalf("expected invalid profile error, got %q", errOut.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("expected no stdout for invalid profile, got %q", out.String())
+	}
+}

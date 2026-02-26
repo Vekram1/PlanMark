@@ -36,6 +36,11 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "missing --plan")
 		return protocol.ExitUsageError
 	}
+	normalizedProfile, err := doctor.NormalizeProfile(*profile)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return protocol.ExitUsageError
+	}
 
 	content, err := os.ReadFile(*planPath)
 	if err != nil {
@@ -44,11 +49,45 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	compiled, err := compile.CompilePlan(*planPath, content, compile.NewParser(nil))
 	if err != nil {
+		if d, ok := doctor.DiagnosticFromCompileError(err); ok {
+			result := doctor.Result{
+				Profile:     normalizedProfile,
+				ParsedNodes: 0,
+				ParsedTasks: 0,
+				Diagnostics: []diag.Diagnostic{d},
+			}
+			switch *format {
+			case "text":
+				fmt.Fprintf(stdout, "profile: %s\n", result.Profile)
+				fmt.Fprintf(stdout, "parsed_nodes: %d\n", result.ParsedNodes)
+				fmt.Fprintf(stdout, "parsed_tasks: %d\n", result.ParsedTasks)
+				fmt.Fprintf(stdout, "diagnostics: total=1 errors=1 warnings=0\n")
+				fmt.Fprintln(stdout, doctor.FormatDiagnosticsText(result.Diagnostics))
+			case "json":
+				payload := protocol.Envelope[doctor.Result]{
+					SchemaVersion: protocol.SchemaVersionV01,
+					ToolVersion:   CLIVersion,
+					Command:       "doctor",
+					Status:        "validation_failed",
+					Data:          result,
+				}
+				enc := json.NewEncoder(stdout)
+				enc.SetEscapeHTML(false)
+				if err := enc.Encode(payload); err != nil {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitInternalError
+				}
+			default:
+				fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
+				return protocol.ExitUsageError
+			}
+			return protocol.ExitValidationFailed
+		}
 		fmt.Fprintf(stderr, "compile plan: %v\n", err)
 		return protocol.ExitInternalError
 	}
 
-	result, err := doctor.Run(compiled, *profile)
+	result, err := doctor.Run(compiled, normalizedProfile)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return protocol.ExitUsageError

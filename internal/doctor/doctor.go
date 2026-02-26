@@ -24,12 +24,9 @@ var validProfiles = map[string]struct{}{
 }
 
 func Run(plan ir.PlanIR, profile string) (Result, error) {
-	normalized := strings.ToLower(strings.TrimSpace(profile))
-	if normalized == "" {
-		normalized = "loose"
-	}
-	if _, ok := validProfiles[normalized]; !ok {
-		return Result{}, errors.New("invalid profile: must be one of loose|build|exec")
+	normalized, err := NormalizeProfile(profile)
+	if err != nil {
+		return Result{}, err
 	}
 
 	diagnostics := make([]diag.Diagnostic, 0)
@@ -43,6 +40,17 @@ func Run(plan ir.PlanIR, profile string) (Result, error) {
 		ParsedTasks: len(plan.Semantic.Tasks),
 		Diagnostics: diagnostics,
 	}, nil
+}
+
+func NormalizeProfile(profile string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(profile))
+	if normalized == "" {
+		normalized = "loose"
+	}
+	if _, ok := validProfiles[normalized]; !ok {
+		return "", errors.New("invalid profile: must be one of loose|build|exec")
+	}
+	return normalized, nil
 }
 
 func ValidateGraph(plan ir.PlanIR) Result {
