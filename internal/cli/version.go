@@ -57,6 +57,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runSync(args[1:], stdout, stderr)
 	case "changes":
 		return runChanges(args[1:], stdout, stderr)
+	case "propose-change":
+		return runProposeChange(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return protocol.ExitUsageError
