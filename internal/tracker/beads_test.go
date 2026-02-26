@@ -1,12 +1,17 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vikramoddiraju/planmark/internal/cache"
 )
 
 func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
@@ -314,5 +319,100 @@ func TestBeadsWriteSyncManifest(t *testing.T) {
 	}
 	if manifest.Entries[1].LastSeenRuntimeHash != "" {
 		t.Fatalf("expected second entry to omit runtime hash, got %#v", manifest.Entries[1])
+	}
+}
+
+func TestBeadsWriteSyncManifestRespectsLock(t *testing.T) {
+	adapter := NewBeadsAdapter()
+	stateDir := filepath.Join(t.TempDir(), ".planmark")
+
+	lock, err := cache.AcquireLock(stateDir, "sync-beads-manifest")
+	if err != nil {
+		t.Fatalf("acquire preexisting lock: %v", err)
+	}
+	defer lock.Release()
+
+	_, err = adapter.WriteSyncManifest(stateDir)
+	if err == nil {
+		t.Fatalf("expected write sync manifest to fail while lock is held")
+	}
+	if !errors.Is(err, cache.ErrLockHeld) {
+		t.Fatalf("expected ErrLockHeld, got: %v", err)
+	}
+}
+
+func TestBeadsGoldenProjection(t *testing.T) {
+	task := TaskProjection{
+		ID:              "fixture.task.golden_projection",
+		Title:           "Golden projection payload",
+		SourcePath:      "testdata/plans/mixed.md",
+		SourceStartLine: 21,
+		SourceEndLine:   24,
+		SourceHash:      strings.Repeat("9", 64),
+		Accept: []string{
+			"cmd:go test ./... -run TestCompile",
+			"cmd:go test ./... -run TestSync",
+		},
+	}
+	payload, err := BuildProjectionPayload(task)
+	if err != nil {
+		t.Fatalf("build projection payload: %v", err)
+	}
+	got, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal projection payload: %v", err)
+	}
+	got = append(got, '\n')
+
+	wantPath := filepath.Join("..", "..", "testdata", "tracker", "beads", "projection.request.golden.json")
+	want, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read golden %s: %v", wantPath, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("golden mismatch for %s\nwant:\n%s\ngot:\n%s", wantPath, string(want), string(got))
+	}
+}
+
+func TestBeadsGoldenPullSafeFields(t *testing.T) {
+	adapter := NewBeadsAdapter()
+	taskID := "fixture.task.golden_pull"
+	adapter.SetRemoteRuntimeFields(taskID, RuntimeFields{
+		Status:   "in_progress",
+		Assignee: "agent.golden",
+		Priority: "P1",
+	})
+
+	gotState, err := adapter.PullRuntimeFields(context.Background(), []string{taskID})
+	if err != nil {
+		t.Fatalf("pull runtime fields: %v", err)
+	}
+	fields, ok := gotState[taskID]
+	if !ok {
+		t.Fatalf("expected runtime fields for %s", taskID)
+	}
+	envelope := map[string]any{
+		"id": taskID,
+		"runtime": map[string]string{
+			"status":   fields.Status,
+			"assignee": fields.Assignee,
+			"priority": fields.Priority,
+		},
+		"snapshot": fmt.Sprintf("%s|%s|%s", fields.Status, fields.Assignee, fields.Priority),
+	}
+
+	got, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal runtime envelope: %v", err)
+	}
+	got = append(got, '\n')
+
+	wantPath := filepath.Join("..", "..", "testdata", "tracker", "beads", "pull.response.golden.json")
+	want, err := os.ReadFile(wantPath)
+	if err != nil {
+		t.Fatalf("read golden %s: %v", wantPath, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("golden mismatch for %s\nwant:\n%s\ngot:\n%s", wantPath, string(want), string(got))
 	}
 }

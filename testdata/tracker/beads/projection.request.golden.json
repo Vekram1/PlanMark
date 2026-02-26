@@ -1,0 +1,13 @@
+{
+  "projection_schema_version": "v0.1",
+  "id": "fixture.task.golden_projection",
+  "title": "Golden projection payload",
+  "anchor": "testdata/plans/mixed.md#L21",
+  "source_range": {
+    "path": "testdata/plans/mixed.md",
+    "start_line": 21,
+    "end_line": 24
+  },
+  "source_hash": "9999999999999999999999999999999999999999999999999999999999999999",
+  "acceptance_digest": "25d67dcab161e3d00420fb1e2d32396066a4d43b17815f00644616dce9ac2055"
+}

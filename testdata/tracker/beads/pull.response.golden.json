@@ -1,0 +1,9 @@
+{
+  "id": "fixture.task.golden_pull",
+  "runtime": {
+    "assignee": "agent.golden",
+    "priority": "P1",
+    "status": "in_progress"
+  },
+  "snapshot": "in_progress|agent.golden|P1"
+}

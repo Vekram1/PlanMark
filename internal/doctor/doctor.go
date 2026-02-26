@@ -23,6 +23,22 @@ var validProfiles = map[string]struct{}{
 	"exec":  {},
 }
 
+var validHorizons = map[string]struct{}{
+	"now":   {},
+	"next":  {},
+	"later": {},
+}
+
+type QueryTask struct {
+	ID      string   `json:"id"`
+	Title   string   `json:"title"`
+	Horizon string   `json:"horizon,omitempty"`
+	NodeRef string   `json:"node_ref"`
+	Deps    []string `json:"deps,omitempty"`
+	Ready   bool     `json:"ready"`
+	Blocked bool     `json:"blocked"`
+}
+
 func Run(plan ir.PlanIR, profile string) (Result, error) {
 	normalized, err := NormalizeProfile(profile)
 	if err != nil {
@@ -51,6 +67,58 @@ func NormalizeProfile(profile string) (string, error) {
 		return "", errors.New("invalid profile: must be one of loose|build|exec")
 	}
 	return normalized, nil
+}
+
+func NormalizeHorizonFilter(horizon string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(horizon))
+	if normalized == "" {
+		return "", nil
+	}
+	if _, ok := validHorizons[normalized]; !ok {
+		return "", errors.New("invalid horizon filter: must be one of now|next|later")
+	}
+	return normalized, nil
+}
+
+func QueryTasks(plan ir.PlanIR, horizonFilter string) ([]QueryTask, error) {
+	normalizedHorizon, err := NormalizeHorizonFilter(horizonFilter)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]QueryTask, 0, len(plan.Semantic.Tasks))
+	for _, task := range plan.Semantic.Tasks {
+		horizon := strings.ToLower(strings.TrimSpace(task.Horizon))
+		if normalizedHorizon != "" && horizon != normalizedHorizon {
+			continue
+		}
+
+		deps := make([]string, 0, len(task.Deps))
+		for _, dep := range task.Deps {
+			trimmed := strings.TrimSpace(dep)
+			if trimmed == "" {
+				continue
+			}
+			deps = append(deps, trimmed)
+		}
+		sort.Strings(deps)
+
+		blocked := len(deps) > 0
+		out = append(out, QueryTask{
+			ID:      task.ID,
+			Title:   task.Title,
+			Horizon: horizon,
+			NodeRef: task.NodeRef,
+			Deps:    deps,
+			Ready:   !blocked,
+			Blocked: blocked,
+		})
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
 }
 
 func ValidateGraph(plan ir.PlanIR) Result {
