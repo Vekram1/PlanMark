@@ -45,7 +45,7 @@ func runExplain(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("explain", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "", "path to PLAN markdown file")
-	format := fs.String("format", "text", "output format: text|json")
+	format := fs.String("format", "text", "output format: text|rich|json")
 	if err := fs.Parse(filteredArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return protocol.ExitSuccess
@@ -56,7 +56,7 @@ func runExplain(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	remaining := fs.Args()
 	if len(remaining) > 1 {
-		fmt.Fprintln(stderr, "usage: plan explain <id> --plan <path> [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan explain <id> --plan <path> [--format text|rich|json]")
 		return protocol.ExitUsageError
 	}
 	if len(remaining) == 1 {
@@ -67,7 +67,7 @@ func runExplain(args []string, stdout io.Writer, stderr io.Writer) int {
 		positionalID = remaining[0]
 	}
 	if strings.TrimSpace(positionalID) == "" {
-		fmt.Fprintln(stderr, "usage: plan explain <id> --plan <path> [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan explain <id> --plan <path> [--format text|rich|json]")
 		return protocol.ExitUsageError
 	}
 	if *planPath == "" {
@@ -136,6 +136,27 @@ func runExplain(args []string, stdout io.Writer, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "- %s: %s\n", blocker.Code, blocker.Message)
 				if blocker.Suggestion != "" {
 					fmt.Fprintf(stdout, "  suggestion: %s\n", blocker.Suggestion)
+				}
+			}
+		}
+	case "rich":
+		status := "runnable"
+		if !result.Runnable {
+			status = "blocked"
+		}
+		fmt.Fprintln(stdout, "explain:")
+		fmt.Fprintf(stdout, "  task_id: %s\n", result.TaskID)
+		fmt.Fprintf(stdout, "  title: %s\n", result.Title)
+		fmt.Fprintf(stdout, "  horizon: %s\n", result.Horizon)
+		fmt.Fprintf(stdout, "  status: %s\n", status)
+		fmt.Fprintf(stdout, "  blockers: %d\n", len(result.Blockers))
+		if len(result.Blockers) > 0 {
+			fmt.Fprintln(stdout, "  blocker_details:")
+			for idx, blocker := range result.Blockers {
+				fmt.Fprintf(stdout, "    %d. code: %s\n", idx+1, blocker.Code)
+				fmt.Fprintf(stdout, "       message: %s\n", blocker.Message)
+				if blocker.Suggestion != "" {
+					fmt.Fprintf(stdout, "       suggestion: %s\n", blocker.Suggestion)
 				}
 			}
 		}

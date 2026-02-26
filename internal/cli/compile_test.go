@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vikramoddiraju/planmark/internal/build"
 )
 
 func TestCompileWithPlanFlagWritesOutput(t *testing.T) {
@@ -106,6 +109,43 @@ func TestCompileWritesManifestWhenStateDirProvided(t *testing.T) {
 	manifestPath := filepath.Join(stateDir, "build", "compile-manifest.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("expected compile manifest at %q: %v", manifestPath, err)
+	}
+}
+
+func TestCompileManifestUsesRepoConfigHashWhenPresent(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark-state")
+	if err := os.WriteFile(planPath, []byte("- [ ] Task A\n  @id fixture.task.a\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".planmark.yaml"), []byte("profiles:\n  doctor: exec\n"), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"compile", "--plan", planPath, "--state-dir", stateDir}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	manifestPath := filepath.Join(stateDir, "build", "compile-manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read compile manifest: %v", err)
+	}
+	var manifest struct {
+		EffectiveConfigHash string `json:"effective_config_hash"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("decode compile manifest: %v", err)
+	}
+	if manifest.EffectiveConfigHash == "" {
+		t.Fatalf("expected non-empty effective_config_hash")
+	}
+	if manifest.EffectiveConfigHash == build.DefaultEffectiveConfigHash() {
+		t.Fatalf("expected non-default effective_config_hash when repo config exists")
 	}
 }
 

@@ -224,3 +224,101 @@ func TestDoctorInvalidProfilePrecedenceOverCompileLimit(t *testing.T) {
 		t.Fatalf("expected no stdout for invalid profile, got %q", out.String())
 	}
 }
+
+func TestRepoConfigProfileOverrides(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id task.now",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".planmark.yaml"), []byte("profiles:\n  doctor: exec\n"), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"doctor", "--plan", planPath}, &out, &errOut)
+	if exit != 1 {
+		t.Fatalf("expected exec profile from config to fail for missing accept, got %d stderr=%q output=%q", exit, errOut.String(), out.String())
+	}
+	if !strings.Contains(out.String(), "profile: exec") {
+		t.Fatalf("expected profile exec from config, got output: %q", out.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	exit = Run([]string{"doctor", "--plan", planPath, "--profile", "loose"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected explicit --profile to override config, got %d stderr=%q output=%q", exit, errOut.String(), out.String())
+	}
+	if !strings.Contains(out.String(), "profile: loose") {
+		t.Fatalf("expected profile loose from flag override, got output: %q", out.String())
+	}
+}
+
+func TestDoctorRichFormatOutput(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id task.now",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"doctor", "--plan", planPath, "--profile", "exec", "--format", "rich"}, &out, &errOut)
+	if exit != 1 {
+		t.Fatalf("expected validation failure exit for missing accept, got %d stderr=%q output=%q", exit, errOut.String(), out.String())
+	}
+	if !strings.Contains(out.String(), "diagnostics:") || !strings.Contains(out.String(), "entries:") {
+		t.Fatalf("expected rich diagnostics sections, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "[ERROR] MISSING_ACCEPT") {
+		t.Fatalf("expected rich entry with code, got %q", out.String())
+	}
+}
+
+func TestDoctorFixOutUsesResolvedProfile(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id task.now",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, ".planmark.yaml"), []byte("profiles:\n  doctor: exec\n"), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	fixOutPath := filepath.Join(tmp, "fix.json")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"doctor", "--plan", planPath, "--fix-out", fixOutPath}, &out, &errOut)
+	if exit != 1 {
+		t.Fatalf("expected validation failure exit, got %d stderr=%q output=%q", exit, errOut.String(), out.String())
+	}
+
+	raw, err := os.ReadFile(fixOutPath)
+	if err != nil {
+		t.Fatalf("read fix-out: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode fix-out: %v raw=%q", err, string(raw))
+	}
+	if payload["profile"] != "exec" {
+		t.Fatalf("expected resolved profile exec in fix-out, got %v", payload["profile"])
+	}
+}

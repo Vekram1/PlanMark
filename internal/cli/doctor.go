@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/compile"
+	"github.com/vikramoddiraju/planmark/internal/config"
 	"github.com/vikramoddiraju/planmark/internal/diag"
 	"github.com/vikramoddiraju/planmark/internal/doctor"
 	"github.com/vikramoddiraju/planmark/internal/fsio"
@@ -21,8 +22,9 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "", "path to PLAN markdown file")
-	profile := fs.String("profile", "loose", "strictness profile: loose|build|exec")
-	format := fs.String("format", "text", "output format: text|json")
+	profileFlag := hasLongFlag(args, "profile")
+	profile := fs.String("profile", "", "strictness profile: loose|build|exec")
+	format := fs.String("format", "text", "output format: text|rich|json")
 	fixOut := fs.String("fix-out", "", "write deterministic repair suggestions as Plan Delta JSON (no file mutation)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -36,7 +38,22 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "missing --plan")
 		return protocol.ExitUsageError
 	}
-	normalizedProfile, err := doctor.NormalizeProfile(*profile)
+
+	repoConfig, err := config.LoadForPlan(*planPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load repo config: %v\n", err)
+		return protocol.ExitUsageError
+	}
+
+	selectedProfile := strings.TrimSpace(*profile)
+	if selectedProfile == "" && !profileFlag {
+		selectedProfile = strings.TrimSpace(repoConfig.Profile)
+	}
+	if selectedProfile == "" {
+		selectedProfile = "loose"
+	}
+
+	normalizedProfile, err := doctor.NormalizeProfile(selectedProfile)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return protocol.ExitUsageError
@@ -77,6 +94,11 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 					fmt.Fprintln(stderr, err.Error())
 					return protocol.ExitInternalError
 				}
+			case "rich":
+				fmt.Fprintf(stdout, "profile: %s\n", result.Profile)
+				fmt.Fprintf(stdout, "parsed_nodes: %d\n", result.ParsedNodes)
+				fmt.Fprintf(stdout, "parsed_tasks: %d\n", result.ParsedTasks)
+				fmt.Fprintln(stdout, doctor.FormatDiagnosticsRich(result.Diagnostics))
 			default:
 				fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
 				return protocol.ExitUsageError
@@ -96,7 +118,7 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 	errorCount, warningCount := countBySeverity(result.Diagnostics)
 
 	if strings.TrimSpace(*fixOut) != "" {
-		fix := doctor.BuildFixOut(compiled, *profile)
+		fix := doctor.BuildFixOut(compiled, normalizedProfile)
 		if err := writeJSONFile(*fixOut, fix); err != nil {
 			fmt.Fprintf(stderr, "write --fix-out: %v\n", err)
 			return protocol.ExitInternalError
@@ -130,6 +152,11 @@ func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err.Error())
 			return protocol.ExitInternalError
 		}
+	case "rich":
+		fmt.Fprintf(stdout, "profile: %s\n", result.Profile)
+		fmt.Fprintf(stdout, "parsed_nodes: %d\n", result.ParsedNodes)
+		fmt.Fprintf(stdout, "parsed_tasks: %d\n", result.ParsedTasks)
+		fmt.Fprintln(stdout, doctor.FormatDiagnosticsRich(result.Diagnostics))
 	default:
 		fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
 		return protocol.ExitUsageError

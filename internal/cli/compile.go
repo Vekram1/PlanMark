@@ -13,6 +13,7 @@ import (
 	"github.com/vikramoddiraju/planmark/internal/build"
 	"github.com/vikramoddiraju/planmark/internal/change"
 	"github.com/vikramoddiraju/planmark/internal/compile"
+	"github.com/vikramoddiraju/planmark/internal/config"
 )
 
 func runCompile(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -90,6 +91,11 @@ func runCompile(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
 		return 2
 	}
+	repoConfig, err := config.LoadForPlan(*planPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load repo config: %v\n", err)
+		return 2
+	}
 
 	data, err := os.ReadFile(*planPath)
 	if err != nil {
@@ -126,7 +132,11 @@ func runCompile(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	if strings.TrimSpace(*stateDir) != "" {
-		manifest := build.BuildCompileManifest(compiled, data, payload, build.DefaultEffectiveConfigHash())
+		effectiveConfigHash := build.DefaultEffectiveConfigHash()
+		if repoConfig.Found && strings.TrimSpace(repoConfig.Hash) != "" {
+			effectiveConfigHash = repoConfig.Hash
+		}
+		manifest := build.BuildCompileManifest(compiled, data, payload, effectiveConfigHash)
 		if _, err := build.WriteCompileManifest(*stateDir, manifest); err != nil {
 			fmt.Fprintf(stderr, "write compile manifest: %v\n", err)
 			return 1
