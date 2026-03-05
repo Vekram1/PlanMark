@@ -260,6 +260,9 @@ func TestAIApplyFixJSONOutputIncludesReviewableProposal(t *testing.T) {
 	if approved, ok := data["approved"].(bool); !ok || !approved {
 		t.Fatalf("expected approved=true, got %v", data["approved"])
 	}
+	if mutated, ok := data["plan_mutated"].(bool); !ok || mutated {
+		t.Fatalf("expected plan_mutated=false, got %v", data["plan_mutated"])
+	}
 	proposal := data["proposal"].(map[string]any)
 	if strings.TrimSpace(proposal["base_plan_hash"].(string)) == "" {
 		t.Fatalf("expected non-empty base_plan_hash")

@@ -246,6 +246,7 @@ type applyFixResult struct {
 	PlanPath            string           `json:"plan_path"`
 	Profile             string           `json:"profile"`
 	Approved            bool             `json:"approved"`
+	PlanMutated         bool             `json:"plan_mutated"`
 	Prompt              string           `json:"prompt"`
 	Proposal            applyFixProposal `json:"proposal"`
 	PreDiagnosticCount  int              `json:"pre_diagnostic_count"`
@@ -494,7 +495,9 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 		PlanPath: filepathToSlash(*planPath),
 		Profile:  normalizedProfile,
 		Approved: true,
-		Prompt:   prompt,
+		// apply-fix currently emits a reviewable proposal and does not mutate PLAN.md in-place.
+		PlanMutated: false,
+		Prompt:      prompt,
 		Proposal: applyFixProposal{
 			ProposalType: "plan_delta_preview",
 			BasePlanHash: basePlanHash,
@@ -523,6 +526,7 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "plan_path: %s\n", result.PlanPath)
 		fmt.Fprintf(stdout, "profile: %s\n", result.Profile)
 		fmt.Fprintf(stdout, "approved: %t\n", result.Approved)
+		fmt.Fprintf(stdout, "plan_mutated: %t\n", result.PlanMutated)
 		fmt.Fprintf(stdout, "proposal_type: %s\n", result.Proposal.ProposalType)
 		fmt.Fprintf(stdout, "base_plan_hash: %s\n", result.Proposal.BasePlanHash)
 		fmt.Fprintf(stdout, "pre_diagnostic_count: %d\n", result.PreDiagnosticCount)

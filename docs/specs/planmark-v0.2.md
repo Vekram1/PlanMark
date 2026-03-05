@@ -173,6 +173,14 @@ Notes:
   - `2`: usage/flag error
   - `3`: internal error
 
+## AI Helper Boundary (Non-Canonical)
+
+- `plan ai ...` commands are assistive and non-canonical.
+- Canonical commands (`compile`, `doctor`, `context`, `open`, `explain`, `sync`) must remain deterministic and offline-safe.
+- `plan ai suggest-fix` may derive prompt/repair proposals from deterministic diagnostics, but it must not mutate `PLAN.md` implicitly.
+- Any apply flow (`plan ai apply-fix`) must require explicit approval, emit a reviewable delta/patch proposal, and be re-validated via deterministic commands.
+- If a command only previews a fix proposal, output must explicitly state that `PLAN.md` was not mutated.
+
 ## Non-Goals for This Draft
 
 - JSON Schema publication in this task.
