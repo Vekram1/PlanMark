@@ -43,6 +43,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch args[0] {
 	case "version":
 		return runVersion(args[1:], stdout, stderr)
+	case "init":
+		return runInit(args[1:], stdout, stderr)
 	case "compile":
 		return runCompile(args[1:], stdout, stderr)
 	case "doctor":

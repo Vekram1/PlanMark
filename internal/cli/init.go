@@ -1,0 +1,233 @@
+package cli
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/vikramoddiraju/planmark/internal/fsio"
+	"github.com/vikramoddiraju/planmark/internal/protocol"
+)
+
+const (
+	stateVersionV01 = "v0.1"
+	defaultPlanBody = `# PLAN
+
+- [ ] Example Task
+  @id example.task
+  @summary Replace this with your first real task.
+`
+	defaultConfigBody = `schema_version: v0.1
+profiles:
+  doctor: loose
+
+# Optional AI provider settings for "plan ai apply-fix":
+# ai:
+#   provider: deterministic_mock
+#   # provider: openai_compatible
+#   # model: gpt-4o-mini
+#   # base_url: https://api.openai.com/v1
+#   # api_key_env: OPENAI_API_KEY
+#   # timeout_seconds: 30
+`
+)
+
+type initData struct {
+	ProjectDir  string   `json:"project_dir"`
+	PlanPath    string   `json:"plan_path"`
+	ConfigPath  string   `json:"config_path,omitempty"`
+	StateDir    string   `json:"state_dir"`
+	Created     []string `json:"created"`
+	Existing    []string `json:"existing"`
+	NextCommand string   `json:"next_command"`
+}
+
+func runInit(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	projectDir := fs.String("dir", ".", "project directory to initialize")
+	planPathFlag := fs.String("plan", "PLAN.md", "plan file path (absolute or relative to --dir)")
+	stateDirFlag := fs.String("state-dir", ".planmark", "state directory path (absolute or relative to --dir)")
+	configPathFlag := fs.String("config", ".planmark.yaml", "config file path (absolute or relative to --dir)")
+	noPlanTemplate := fs.Bool("no-plan-template", false, "do not create PLAN template when plan file is missing")
+	noConfig := fs.Bool("no-config", false, "do not create .planmark.yaml when missing")
+	format := fs.String("format", "text", "output format: text|json")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return protocol.ExitSuccess
+		}
+		fmt.Fprintln(stderr, err.Error())
+		return protocol.ExitUsageError
+	}
+	if len(fs.Args()) != 0 {
+		fmt.Fprintln(stderr, "usage: plan init [--dir <path>] [--plan <path>] [--state-dir <path>] [--config <path>] [--no-plan-template] [--no-config] [--format text|json]")
+		return protocol.ExitUsageError
+	}
+	if *format != "text" && *format != "json" {
+		fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
+		return protocol.ExitUsageError
+	}
+
+	root, err := filepath.Abs(strings.TrimSpace(*projectDir))
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve --dir: %v\n", err)
+		return protocol.ExitUsageError
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		fmt.Fprintf(stderr, "stat --dir: %v\n", err)
+		return protocol.ExitUsageError
+	}
+	if !info.IsDir() {
+		fmt.Fprintf(stderr, "--dir is not a directory: %s\n", root)
+		return protocol.ExitUsageError
+	}
+
+	resolvePath := func(raw string) string {
+		trimmed := strings.TrimSpace(raw)
+		if filepath.IsAbs(trimmed) {
+			return filepath.Clean(trimmed)
+		}
+		return filepath.Join(root, trimmed)
+	}
+
+	planPath := resolvePath(*planPathFlag)
+	stateDir := resolvePath(*stateDirFlag)
+	configPath := resolvePath(*configPathFlag)
+
+	created := make([]string, 0, 8)
+	existing := make([]string, 0, 8)
+
+	dirs := []string{
+		stateDir,
+		filepath.Join(stateDir, "build"),
+		filepath.Join(stateDir, "sync"),
+		filepath.Join(stateDir, "cache", "context"),
+		filepath.Join(stateDir, "cas", "sha256"),
+		filepath.Join(stateDir, "journal", "sync"),
+		filepath.Join(stateDir, "locks"),
+	}
+	for _, dir := range dirs {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			existing = append(existing, relToProject(root, dir))
+			continue
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintf(stderr, "create state dir %s: %v\n", dir, err)
+			return protocol.ExitInternalError
+		}
+		created = append(created, relToProject(root, dir))
+	}
+
+	stateVersionPath := filepath.Join(stateDir, "state_version.json")
+	if _, err := os.Stat(stateVersionPath); errors.Is(err, os.ErrNotExist) {
+		payload := []byte("{\n  \"state_version\": \"" + stateVersionV01 + "\"\n}\n")
+		if err := fsio.WriteFileAtomic(stateVersionPath, payload, 0o644); err != nil {
+			fmt.Fprintf(stderr, "write state version: %v\n", err)
+			return protocol.ExitInternalError
+		}
+		created = append(created, relToProject(root, stateVersionPath))
+	} else if err == nil {
+		existing = append(existing, relToProject(root, stateVersionPath))
+	} else {
+		fmt.Fprintf(stderr, "stat state version: %v\n", err)
+		return protocol.ExitInternalError
+	}
+
+	if _, err := os.Stat(planPath); errors.Is(err, os.ErrNotExist) {
+		if !*noPlanTemplate {
+			if err := fsio.WriteFileAtomic(planPath, []byte(defaultPlanBody), 0o644); err != nil {
+				fmt.Fprintf(stderr, "write plan template: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			created = append(created, relToProject(root, planPath))
+		}
+	} else if err == nil {
+		existing = append(existing, relToProject(root, planPath))
+	} else {
+		fmt.Fprintf(stderr, "stat plan path: %v\n", err)
+		return protocol.ExitInternalError
+	}
+
+	if !*noConfig {
+		if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
+			if err := fsio.WriteFileAtomic(configPath, []byte(defaultConfigBody), 0o644); err != nil {
+				fmt.Fprintf(stderr, "write config: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			created = append(created, relToProject(root, configPath))
+		} else if err == nil {
+			existing = append(existing, relToProject(root, configPath))
+		} else {
+			fmt.Fprintf(stderr, "stat config path: %v\n", err)
+			return protocol.ExitInternalError
+		}
+	}
+
+	result := initData{
+		ProjectDir:  root,
+		PlanPath:    planPath,
+		ConfigPath:  configPath,
+		StateDir:    stateDir,
+		Created:     created,
+		Existing:    existing,
+		NextCommand: "plan compile --plan " + planPath + " --out " + filepath.Join(stateDir, "tmp", "plan.json"),
+	}
+	if *noConfig {
+		result.ConfigPath = ""
+	}
+
+	switch *format {
+	case "json":
+		envelope := protocol.Envelope[initData]{
+			SchemaVersion: protocol.SchemaVersionV01,
+			ToolVersion:   CLIVersion,
+			Command:       "init",
+			Status:        "ok",
+			Data:          result,
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(envelope); err != nil {
+			fmt.Fprintf(stderr, "write json output: %v\n", err)
+			return protocol.ExitInternalError
+		}
+	default:
+		fmt.Fprintf(stdout, "Initialized PlanMark in %s\n", root)
+		fmt.Fprintln(stdout, "Created:")
+		if len(created) == 0 {
+			fmt.Fprintln(stdout, "- (none)")
+		} else {
+			for _, p := range created {
+				fmt.Fprintf(stdout, "- %s\n", p)
+			}
+		}
+		fmt.Fprintln(stdout, "Already existed:")
+		if len(existing) == 0 {
+			fmt.Fprintln(stdout, "- (none)")
+		} else {
+			for _, p := range existing {
+				fmt.Fprintf(stdout, "- %s\n", p)
+			}
+		}
+		fmt.Fprintln(stdout, "Next:")
+		fmt.Fprintf(stdout, "- %s\n", result.NextCommand)
+	}
+	return protocol.ExitSuccess
+}
+
+func relToProject(root string, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if rel == "." {
+		return rel
+	}
+	return filepath.Clean(rel)
+}

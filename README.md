@@ -37,26 +37,64 @@ PLAN.md (canonical, mixed markdown)
 ## Quickstart
 
 ```bash
-# 1) Capability handshake
+# 0) Install the CLI (from source checkout)
+go build -o ./bin/plan ./cmd/plan
+./bin/plan version --format json
+export PATH="$PWD/bin:$PATH"
+
+# 1) Initialize current project once
+./bin/plan init --dir . --format text
+
+# 2) Capability handshake
 plan version --format json
 
-# 2) Compile plan into IR
+# 3) Compile plan into IR
 plan compile --plan PLAN.md --out .planmark/tmp/plan.json
 
-# 3) Diagnose readiness/tolerance issues
+# 4) Diagnose readiness/tolerance issues
 plan doctor --plan PLAN.md --profile loose --format rich
 
-# 4) Get execution context for a task
+# 5) Get execution context for a task
 plan context <task-id> --plan PLAN.md --level L0 --format json
 
-# 5) Page-fault into exact source when needed
+# 6) Page-fault into exact source when needed
 plan open <task-id-or-node-ref> --plan PLAN.md --format json
 plan explain <task-id> --plan PLAN.md --format rich
+```
+
+## Standalone Install (curl)
+
+Install PlanMark globally with dependency checks (macOS/Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
+```
+
+Optional installer environment variables:
+
+```bash
+# install location (default: ~/.local/bin)
+PLANMARK_INSTALL_DIR="$HOME/bin"
+
+# repo/ref override
+PLANMARK_REPO="Vekram1/PlanMark"
+PLANMARK_REF="master"
+
+# disable automatic dependency install attempts
+PLANMARK_AUTO_INSTALL_DEPS=0
+```
+
+After install, initialize any project once:
+
+```bash
+cd /path/to/your/project
+plan init --dir . --format text
 ```
 
 ## Core Commands
 
 - `plan version --format text|json`
+- `plan init [--dir <path>] [--plan <path>] [--state-dir <path>] [--config <path>] [--no-plan-template] [--no-config] [--format text|json]`
 - `plan compile --plan <path> [--out <path>] [--state-dir <path>]`
 - `plan doctor --plan <path> [--profile loose|build|exec] [--format text|rich|json]`
 - `plan context <id> --plan <path> --level L0|L1|L2 [--format text|json]`
