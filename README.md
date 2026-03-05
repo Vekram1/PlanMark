@@ -113,6 +113,12 @@ Pinned update:
 curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | PLANMARK_REF=v0.1.0 bash
 ```
 
+Local updater wrapper (when running from a checkout):
+
+```bash
+./scripts/update.sh
+```
+
 ## Startup Guide
 
 Use this when bringing up PlanMark in a new environment.
@@ -144,6 +150,29 @@ plan init --dir . --format text
 
 This creates project-local PlanMark state (`.planmark/`) and optional starter files if missing.
 It also creates or updates a managed block in `AGENTS.md` documenting available `plan` commands for coding agents.
+
+### `plan init` creates
+
+- `.planmark/state_version.json`
+- `.planmark/build/`, `.planmark/sync/`
+- `.planmark/cache/context/`
+- `.planmark/cas/sha256/`
+- `.planmark/journal/sync/`
+- `.planmark/locks/`
+- `PLAN.md` template (if missing, unless `--no-plan-template`)
+- `.planmark.yaml` template (if missing, unless `--no-config`)
+- managed `AGENTS.md` command block
+
+Managed AGENTS block markers:
+
+```md
+<!-- planmark:init:start -->
+...managed content...
+<!-- planmark:init:end -->
+```
+
+If markers already exist, only that managed block is replaced.
+If markers do not exist, the block is appended and existing AGENTS content is preserved.
 
 ### 4) Run the deterministic core workflow
 
