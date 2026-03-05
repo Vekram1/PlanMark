@@ -91,6 +91,52 @@ cd /path/to/your/project
 plan init --dir . --format text
 ```
 
+## Startup Guide
+
+Use this when bringing up PlanMark in a new environment.
+
+### 1) Install PlanMark
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
+```
+
+### 2) Confirm the CLI is available
+
+```bash
+plan version --format json
+```
+
+If `plan` is not found, add the installer output path to your shell profile, for example:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### 3) Initialize a project once
+
+```bash
+cd /path/to/your/project
+plan init --dir . --format text
+```
+
+This creates project-local PlanMark state (`.planmark/`) and optional starter files if missing.
+
+### 4) Run the deterministic core workflow
+
+```bash
+plan compile --plan PLAN.md --out .planmark/tmp/plan.json
+plan doctor --plan PLAN.md --profile loose --format rich
+plan changes --plan PLAN.md --format json
+plan sync beads --plan PLAN.md --dry-run --format json
+```
+
+### 5) Optional AI workflow
+
+```bash
+plan ai apply-fix --plan PLAN.md --approve --format json
+```
+
 ## Core Commands
 
 - `plan version --format text|json`
