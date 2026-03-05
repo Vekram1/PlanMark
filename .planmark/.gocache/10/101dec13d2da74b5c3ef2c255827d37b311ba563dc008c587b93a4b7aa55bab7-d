@@ -1,4 +1,0 @@
-./compiler.go
-./parser.go
-./compiler_test.go
-./parser_test.go
