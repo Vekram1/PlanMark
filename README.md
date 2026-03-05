@@ -4,6 +4,26 @@ PlanMark is a deterministic, lossless plan toolchain for `PLAN.md`.
 
 It compiles mixed-content plans (human + LLM authored) into machine-actionable IR, emits diagnostics and context packets, and supports tracker projection workflows without making the tracker canonical.
 
+## How It Works (Visual)
+
+```text
+PLAN.md (canonical, mixed markdown)
+    |
+    +--> plan compile -----------> plan.json (lossless IR + semantic IR)
+    |                                 |
+    |                                 +--> plan changes (deterministic semantic diff)
+    |
+    +--> plan doctor ------------> diagnostics/readiness (json/text/rich)
+    |
+    +--> plan context/open/explain
+    |       |
+    |       +--> L0/L1/L2 context packets + exact source page-fault retrieval
+    |
+    +--> plan sync beads --------> deterministic tracker projection/reconcile
+    |
+    +--> plan ai ... ------------> optional assistive drafts/summaries (non-canonical)
+```
+
 ## What It Can Do Today
 
 - Deterministic compile from plan markdown to structured IR (`plan compile`).
@@ -78,6 +98,32 @@ Returns deterministic parent/child draft suggestions with:
 - `parent_task_id` (for child rows)
 - `child_order_index` (stable child ordering)
 
+### Apply Fix With Configured/Connected Provider
+
+```bash
+# Repo-local config in .planmark.yaml
+cat > .planmark.yaml <<'YAML'
+ai:
+  provider: deterministic_mock
+  # provider: openai_compatible
+  # model: gpt-4o-mini
+  # base_url: https://api.openai.com/v1
+  # api_key_env: OPENAI_API_KEY
+  # timeout_seconds: 30
+YAML
+
+plan ai apply-fix --plan PLAN.md --approve --format json
+```
+
+You can override provider settings per invocation:
+
+```bash
+plan ai apply-fix --plan PLAN.md --approve \
+  --provider deterministic_mock \
+  --model gpt-4o-mini \
+  --format json
+```
+
 ## Typical Agent Workflow
 
 ```bash
@@ -86,6 +132,20 @@ plan compile --plan PLAN.md --out .planmark/tmp/plan.json
 plan doctor --plan PLAN.md --profile build --format json
 plan changes --plan PLAN.md --format json
 plan sync beads --plan PLAN.md --dry-run --format json
+```
+
+```text
+Agent loop (deterministic core):
+
+compile --> doctor --> changes --> sync --dry-run --> (review) --> sync apply
+   |          |           |              |
+   |          |           |              +--> tracker operation preview
+   |          |           +--> task-level semantic drift
+   |          +--> blockers/readiness diagnostics
+   +--> canonical IR baseline
+
+Escalate context only when needed:
+context L0 --> open/explain --> context L1 --> context L2
 ```
 
 ## Context Minimization Workflow
