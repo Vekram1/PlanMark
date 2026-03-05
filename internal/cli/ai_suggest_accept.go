@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,8 +13,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/vikramoddiraju/planmark/internal/ai"
 	"github.com/vikramoddiraju/planmark/internal/compile"
+	"github.com/vikramoddiraju/planmark/internal/config"
 	contextpkg "github.com/vikramoddiraju/planmark/internal/context"
 	"github.com/vikramoddiraju/planmark/internal/diag"
 	"github.com/vikramoddiraju/planmark/internal/doctor"
@@ -239,6 +243,9 @@ type suggestFixResult struct {
 type applyFixProposal struct {
 	ProposalType string           `json:"proposal_type"`
 	BasePlanHash string           `json:"base_plan_hash"`
+	Provider     string           `json:"provider,omitempty"`
+	Model        string           `json:"model,omitempty"`
+	ProviderText string           `json:"provider_text,omitempty"`
 	Repairs      []suggestFixItem `json:"repairs,omitempty"`
 }
 
@@ -247,6 +254,7 @@ type applyFixResult struct {
 	Profile             string           `json:"profile"`
 	Approved            bool             `json:"approved"`
 	PlanMutated         bool             `json:"plan_mutated"`
+	ProviderConfigured  bool             `json:"provider_configured"`
 	Prompt              string           `json:"prompt"`
 	Proposal            applyFixProposal `json:"proposal"`
 	PreDiagnosticCount  int              `json:"pre_diagnostic_count"`
@@ -435,12 +443,19 @@ func filepathToSlash(path string) string {
 }
 
 func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
+	timeoutFlagExplicit := hasIntFlagArg(args, "--timeout-seconds")
+
 	fs := flag.NewFlagSet("ai apply-fix", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "", "path to PLAN markdown file")
 	format := fs.String("format", "text", "output format: text|json")
 	profile := fs.String("profile", "build", "doctor profile: loose|build|exec")
 	limit := fs.Int("limit", 20, "max repair suggestions to emit")
+	providerFlag := fs.String("provider", "", "ai provider override")
+	modelFlag := fs.String("model", "", "ai model override")
+	baseURLFlag := fs.String("base-url", "", "provider base URL override")
+	apiKeyEnvFlag := fs.String("api-key-env", "", "provider API key env var override")
+	timeoutSecFlag := fs.Int("timeout-seconds", 30, "provider request timeout in seconds")
 	approve := fs.Bool("approve", false, "explicit approval to produce apply-fix proposal")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -460,6 +475,10 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	if *limit <= 0 {
 		fmt.Fprintln(stderr, "--limit must be > 0")
+		return protocol.ExitUsageError
+	}
+	if *timeoutSecFlag <= 0 {
+		fmt.Fprintln(stderr, "--timeout-seconds must be > 0")
 		return protocol.ExitUsageError
 	}
 
@@ -484,6 +503,33 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 	repairs := buildSuggestFixRepairs(preDiags, *limit)
 	prompt := buildSuggestFixPrompt(filepathToSlash(*planPath), normalizedProfile, repairs)
 
+	cfgResolved, cfgErr := config.LoadForPlan(*planPath)
+	if cfgErr != nil {
+		fmt.Fprintf(stderr, "load config: %v\n", cfgErr)
+		return protocol.ExitUsageError
+	}
+
+	effectiveProvider := strings.TrimSpace(*providerFlag)
+	if effectiveProvider == "" {
+		effectiveProvider = strings.TrimSpace(cfgResolved.AI.Provider)
+	}
+	effectiveModel := strings.TrimSpace(*modelFlag)
+	if effectiveModel == "" {
+		effectiveModel = strings.TrimSpace(cfgResolved.AI.Model)
+	}
+	effectiveBaseURL := strings.TrimSpace(*baseURLFlag)
+	if effectiveBaseURL == "" {
+		effectiveBaseURL = strings.TrimSpace(cfgResolved.AI.BaseURL)
+	}
+	effectiveAPIKeyEnv := strings.TrimSpace(*apiKeyEnvFlag)
+	if effectiveAPIKeyEnv == "" {
+		effectiveAPIKeyEnv = strings.TrimSpace(cfgResolved.AI.APIKeyEnv)
+	}
+	effectiveTimeout := time.Duration(*timeoutSecFlag) * time.Second
+	if timeoutFromConfig, err := strconv.Atoi(strings.TrimSpace(cfgResolved.AI.TimeoutSec)); err == nil && timeoutFromConfig > 0 && !timeoutFlagExplicit {
+		effectiveTimeout = time.Duration(timeoutFromConfig) * time.Second
+	}
+
 	// Re-run compile+doctor checks as an explicit post-check before success.
 	postDiags, err := collectDoctorDiagnostics(*planPath, raw, normalizedProfile)
 	if err != nil {
@@ -491,18 +537,64 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 		return protocol.ExitInternalError
 	}
 
+	providerConfigured := effectiveProvider != ""
+	proposal := applyFixProposal{
+		ProposalType: "plan_delta_preview",
+		BasePlanHash: basePlanHash,
+		Repairs:      repairs,
+	}
+	if providerConfigured {
+		var provider ai.Provider
+		switch effectiveProvider {
+		case ai.ProviderDeterministic:
+			provider, err = ai.NewProvider(effectiveProvider)
+			if err != nil {
+				fmt.Fprintf(stderr, "provider init: %v\n", err)
+				return protocol.ExitUsageError
+			}
+		case ai.ProviderOpenAICompatible:
+			provider, err = ai.NewOpenAICompatibleProvider(ai.OpenAICompatibleConfig{
+				BaseURL: effectiveBaseURL,
+				APIKey:  strings.TrimSpace(os.Getenv(effectiveAPIKeyEnv)),
+				Model:   effectiveModel,
+				Timeout: effectiveTimeout,
+			})
+			if err != nil {
+				fmt.Fprintf(stderr, "provider init: %v\n", err)
+				return protocol.ExitUsageError
+			}
+		default:
+			fmt.Fprintf(stderr, "unsupported provider: %s\n", effectiveProvider)
+			return protocol.ExitUsageError
+		}
+
+		providerResp, err := provider.GenerateApplyFix(context.Background(), ai.ApplyFixRequest{
+			PlanPath: filepathToSlash(*planPath),
+			PlanHash: basePlanHash,
+			Prompt:   prompt,
+			Model:    effectiveModel,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "provider generate: %v\n", err)
+			return protocol.ExitInternalError
+		}
+		proposal.Provider = providerResp.Provider
+		proposal.Model = providerResp.Model
+		proposal.ProviderText = providerResp.ProposalText
+		if strings.TrimSpace(providerResp.ProposalType) != "" {
+			proposal.ProposalType = strings.TrimSpace(providerResp.ProposalType)
+		}
+	}
+
 	result := applyFixResult{
 		PlanPath: filepathToSlash(*planPath),
 		Profile:  normalizedProfile,
 		Approved: true,
 		// apply-fix currently emits a reviewable proposal and does not mutate PLAN.md in-place.
-		PlanMutated: false,
-		Prompt:      prompt,
-		Proposal: applyFixProposal{
-			ProposalType: "plan_delta_preview",
-			BasePlanHash: basePlanHash,
-			Repairs:      repairs,
-		},
+		PlanMutated:         false,
+		ProviderConfigured:  providerConfigured,
+		Prompt:              prompt,
+		Proposal:            proposal,
 		PreDiagnosticCount:  len(preDiags),
 		PostDiagnosticCount: len(postDiags),
 	}
@@ -527,8 +619,15 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "profile: %s\n", result.Profile)
 		fmt.Fprintf(stdout, "approved: %t\n", result.Approved)
 		fmt.Fprintf(stdout, "plan_mutated: %t\n", result.PlanMutated)
+		fmt.Fprintf(stdout, "provider_configured: %t\n", result.ProviderConfigured)
 		fmt.Fprintf(stdout, "proposal_type: %s\n", result.Proposal.ProposalType)
 		fmt.Fprintf(stdout, "base_plan_hash: %s\n", result.Proposal.BasePlanHash)
+		if result.Proposal.Provider != "" {
+			fmt.Fprintf(stdout, "provider: %s\n", result.Proposal.Provider)
+		}
+		if result.Proposal.Model != "" {
+			fmt.Fprintf(stdout, "provider_model: %s\n", result.Proposal.Model)
+		}
 		fmt.Fprintf(stdout, "pre_diagnostic_count: %d\n", result.PreDiagnosticCount)
 		fmt.Fprintf(stdout, "post_diagnostic_count: %d\n", result.PostDiagnosticCount)
 		fmt.Fprintln(stdout, "prompt:")
@@ -539,6 +638,10 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "- [%s] %s\n", repair.Code, repair.Message)
 				fmt.Fprintf(stdout, "  suggested_fix: %s\n", repair.SuggestedFix)
 			}
+		}
+		if strings.TrimSpace(result.Proposal.ProviderText) != "" {
+			fmt.Fprintln(stdout, "provider_output:")
+			fmt.Fprintln(stdout, result.Proposal.ProviderText)
 		}
 	default:
 		fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
@@ -566,4 +669,13 @@ func collectDoctorDiagnostics(planPath string, raw []byte, profile string) ([]di
 func sha256HexBytes(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+func hasIntFlagArg(args []string, flagName string) bool {
+	for _, arg := range args {
+		if arg == flagName || strings.HasPrefix(arg, flagName+"=") {
+			return true
+		}
+	}
+	return false
 }

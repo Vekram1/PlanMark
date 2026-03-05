@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,15 @@ type Resolved struct {
 	Path    string
 	Profile string
 	Hash    string
+	AI      AIResolved
+}
+
+type AIResolved struct {
+	Provider   string
+	Model      string
+	BaseURL    string
+	APIKeyEnv  string
+	TimeoutSec string
 }
 
 type rawConfig struct {
@@ -26,6 +36,7 @@ type rawConfig struct {
 	Profile       string
 	Profiles      map[string]string
 	Policies      map[string]string
+	AI            map[string]string
 }
 
 type hashKV struct {
@@ -38,6 +49,7 @@ type hashPayload struct {
 	Profile       string   `json:"profile,omitempty"`
 	Profiles      []hashKV `json:"profiles,omitempty"`
 	Policies      []hashKV `json:"policies,omitempty"`
+	AI            []hashKV `json:"ai,omitempty"`
 }
 
 func LoadForPlan(planPath string) (Resolved, error) {
@@ -63,12 +75,17 @@ func LoadForPlan(planPath string) (Resolved, error) {
 	if profile == "" {
 		profile = strings.TrimSpace(cfg.Profiles["doctor"])
 	}
+	ai, err := resolveAI(cfg.AI)
+	if err != nil {
+		return Resolved{}, err
+	}
 
 	return Resolved{
 		Found:   true,
 		Path:    cfgPath,
 		Profile: profile,
 		Hash:    canonicalHash(cfg),
+		AI:      ai,
 	}, nil
 }
 
@@ -103,6 +120,7 @@ func parseYAML(content []byte) (rawConfig, error) {
 	cfg := rawConfig{
 		Profiles: make(map[string]string),
 		Policies: make(map[string]string),
+		AI:       make(map[string]string),
 	}
 	lines := strings.Split(string(content), "\n")
 	section := ""
@@ -129,7 +147,7 @@ func parseYAML(content []byte) (rawConfig, error) {
 				cfg.SchemaVersion = value
 			case "profile":
 				cfg.Profile = value
-			case "profiles", "policies":
+			case "profiles", "policies", "ai":
 				if value != "" {
 					return rawConfig{}, fmt.Errorf("line %d: %s must be a mapping", lineNumber, key)
 				}
@@ -155,6 +173,8 @@ func parseYAML(content []byte) (rawConfig, error) {
 			cfg.Profiles[key] = value
 		case "policies":
 			cfg.Policies[key] = value
+		case "ai":
+			cfg.AI[key] = value
 		default:
 			return rawConfig{}, fmt.Errorf("line %d: unsupported section %q", lineNumber, section)
 		}
@@ -187,6 +207,7 @@ func canonicalHash(cfg rawConfig) string {
 		Profile:       strings.TrimSpace(cfg.Profile),
 		Profiles:      sortedMap(cfg.Profiles),
 		Policies:      sortedMap(cfg.Policies),
+		AI:            sortedMap(cfg.AI),
 	}
 	b, _ := json.Marshal(payload)
 	sum := sha256.Sum256(b)
@@ -221,4 +242,33 @@ func sortedMap(m map[string]string) []hashKV {
 		return nil
 	}
 	return out
+}
+
+func resolveAI(entries map[string]string) (AIResolved, error) {
+	allowed := map[string]struct{}{
+		"provider":        {},
+		"model":           {},
+		"base_url":        {},
+		"api_key_env":     {},
+		"timeout_seconds": {},
+	}
+	for key := range entries {
+		trimmed := strings.TrimSpace(key)
+		if _, ok := allowed[trimmed]; !ok {
+			return AIResolved{}, fmt.Errorf("parse %s: unknown ai key %q", fileName, trimmed)
+		}
+	}
+	if raw := strings.TrimSpace(entries["timeout_seconds"]); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			return AIResolved{}, fmt.Errorf("parse %s: ai.timeout_seconds must be a positive integer", fileName)
+		}
+	}
+	return AIResolved{
+		Provider:   strings.TrimSpace(entries["provider"]),
+		Model:      strings.TrimSpace(entries["model"]),
+		BaseURL:    strings.TrimSpace(entries["base_url"]),
+		APIKeyEnv:  strings.TrimSpace(entries["api_key_env"]),
+		TimeoutSec: strings.TrimSpace(entries["timeout_seconds"]),
+	}, nil
 }

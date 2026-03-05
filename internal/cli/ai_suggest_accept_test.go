@@ -263,11 +263,116 @@ func TestAIApplyFixJSONOutputIncludesReviewableProposal(t *testing.T) {
 	if mutated, ok := data["plan_mutated"].(bool); !ok || mutated {
 		t.Fatalf("expected plan_mutated=false, got %v", data["plan_mutated"])
 	}
+	if configured, ok := data["provider_configured"].(bool); !ok || configured {
+		t.Fatalf("expected provider_configured=false by default, got %v", data["provider_configured"])
+	}
 	proposal := data["proposal"].(map[string]any)
 	if strings.TrimSpace(proposal["base_plan_hash"].(string)) == "" {
 		t.Fatalf("expected non-empty base_plan_hash")
 	}
 	if proposal["proposal_type"] != "plan_delta_preview" {
 		t.Fatalf("expected proposal type plan_delta_preview, got %v", proposal["proposal_type"])
+	}
+}
+
+func TestAIApplyFixDeterministicProviderFromFlag(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := "- [ ] Task now\n  @id fixture.task.now\n  @horizon now\n"
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{
+		"ai", "apply-fix", "--plan", planPath, "--approve", "--format", "json",
+		"--provider", "deterministic_mock",
+	}, &out, &errOut)
+	if exit != protocol.ExitSuccess {
+		t.Fatalf("expected success, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode output json: %v output=%q", err, out.String())
+	}
+	data := payload["data"].(map[string]any)
+	if configured, ok := data["provider_configured"].(bool); !ok || !configured {
+		t.Fatalf("expected provider_configured=true, got %v", data["provider_configured"])
+	}
+	proposal := data["proposal"].(map[string]any)
+	if proposal["provider"] != "deterministic_mock" {
+		t.Fatalf("expected deterministic provider, got %v", proposal["provider"])
+	}
+	if !strings.Contains(proposal["provider_text"].(string), "Deterministic apply-fix proposal") {
+		t.Fatalf("expected deterministic provider output text, got %q", proposal["provider_text"])
+	}
+}
+
+func TestAIApplyFixUnsupportedProviderReturnsUsageError(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := "- [ ] Task now\n  @id fixture.task.now\n  @horizon now\n"
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{
+		"ai", "apply-fix", "--plan", planPath, "--approve",
+		"--provider", "not_real",
+	}, &out, &errOut)
+	if exit != protocol.ExitUsageError {
+		t.Fatalf("expected usage error, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "unsupported provider") {
+		t.Fatalf("expected unsupported provider error, got %q", errOut.String())
+	}
+}
+
+func TestAIApplyFixDeterministicProviderFromConfig(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := "- [ ] Task now\n  @id fixture.task.now\n  @horizon now\n"
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	cfg := "ai:\n  provider: deterministic_mock\n"
+	if err := os.WriteFile(filepath.Join(tmp, ".planmark.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"ai", "apply-fix", "--plan", planPath, "--approve", "--format", "json"}, &out, &errOut)
+	if exit != protocol.ExitSuccess {
+		t.Fatalf("expected success, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode output json: %v output=%q", err, out.String())
+	}
+	data := payload["data"].(map[string]any)
+	if configured, ok := data["provider_configured"].(bool); !ok || !configured {
+		t.Fatalf("expected provider_configured=true from config, got %v", data["provider_configured"])
+	}
+	proposal := data["proposal"].(map[string]any)
+	if proposal["provider"] != "deterministic_mock" {
+		t.Fatalf("expected deterministic provider from config, got %v", proposal["provider"])
+	}
+}
+
+func TestHasIntFlagArg(t *testing.T) {
+	if !hasIntFlagArg([]string{"--timeout-seconds", "30"}, "--timeout-seconds") {
+		t.Fatalf("expected explicit split flag form to be detected")
+	}
+	if !hasIntFlagArg([]string{"--timeout-seconds=30"}, "--timeout-seconds") {
+		t.Fatalf("expected inline flag form to be detected")
+	}
+	if hasIntFlagArg([]string{"--provider", "deterministic_mock"}, "--timeout-seconds") {
+		t.Fatalf("expected missing flag to be false")
 	}
 }
