@@ -88,6 +88,19 @@ plan changes --plan PLAN.md --format json
 plan sync beads --plan PLAN.md --dry-run --format json
 ```
 
+## Context Minimization Workflow
+
+Use an escalation ladder to save context:
+
+1. Start with task-only context (`L0`):
+   - `plan context <task-id> --plan PLAN.md --level L0 --format json`
+2. Escalate to `L1` only when pin evidence is needed.
+3. Escalate to `L2` only when dependency closure is needed.
+4. Use `plan open` / `plan explain` for targeted retrieval before broad escalation.
+5. Fall back to full `PLAN.md` only when ambiguity remains.
+
+This keeps routine execution sessions small while preserving deterministic traceability to source.
+
 ## Determinism Notes
 
 - `PLAN.md` is canonical.

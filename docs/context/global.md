@@ -64,3 +64,20 @@ Use this order at session start:
 6. Register/refresh MCP Agent Mail, acknowledge pending messages, reserve files, announce start.
 
 This flow keeps context minimal while preserving deterministic traceability back to `PLAN.md`.
+
+## Context budget policy (L0 -> L1 -> L2 -> PLAN)
+
+Use progressive disclosure by default:
+1. Start each bead at `L0`:
+   - `plan context <id> --plan PLAN.md --level L0 --format json`
+2. Escalate to `L1` only for pin-backed evidence:
+   - `plan context <id> --plan PLAN.md --level L1 --format json`
+3. Escalate to `L2` only for dependency-closure reasoning:
+   - `plan context <id> --plan PLAN.md --level L2 --format json`
+4. Use `plan open` / `plan explain` for targeted page faults before escalating further.
+5. Read full `PLAN.md` only when required by unresolved ambiguity or contract-level work.
+
+Escalation trigger rule:
+- Include a one-line escalation reason in agent updates, e.g.:
+  - `Escalating L0 -> L1: missing pin evidence for parser range.`
+  - `Escalating L1 -> L2: unresolved dep interaction across closure.`
