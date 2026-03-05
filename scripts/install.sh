@@ -5,7 +5,8 @@ REPO_SLUG="${PLANMARK_REPO:-Vekram1/PlanMark}"
 REPO_URL="${PLANMARK_REPO_URL:-https://github.com/${REPO_SLUG}.git}"
 INSTALL_DIR="${PLANMARK_INSTALL_DIR:-$HOME/.local/bin}"
 AUTO_INSTALL_DEPS="${PLANMARK_AUTO_INSTALL_DEPS:-1}"
-PLANMARK_REF="${PLANMARK_REF:-master}"
+PLANMARK_CHANNEL="${PLANMARK_CHANNEL:-stable}"
+PLANMARK_REF="${PLANMARK_REF:-}"
 TMP_DIR=""
 
 cleanup() {
@@ -111,8 +112,36 @@ install_dep_or_fail() {
   fi
 }
 
+resolve_target_ref() {
+  if [[ -n "${PLANMARK_REF}" ]]; then
+    echo "${PLANMARK_REF}"
+    return 0
+  fi
+
+  if [[ "${PLANMARK_CHANNEL}" == "edge" ]]; then
+    echo "master"
+    return 0
+  fi
+  if [[ "${PLANMARK_CHANNEL}" != "stable" ]]; then
+    log "Invalid PLANMARK_CHANNEL=${PLANMARK_CHANNEL}. Use stable or edge."
+    exit 1
+  fi
+
+  local latest_api
+  latest_api="https://api.github.com/repos/${REPO_SLUG}/releases/latest"
+  local latest_tag
+  latest_tag="$(curl -fsSL "${latest_api}" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  if [[ -z "${latest_tag}" ]]; then
+    log "Could not resolve latest stable release tag from GitHub."
+    log "Set PLANMARK_REF=<tag> explicitly, or PLANMARK_CHANNEL=edge."
+    exit 1
+  fi
+  echo "${latest_tag}"
+}
+
 main() {
   local os_name
+  local target_ref
   os_name="$(detect_os)"
   if [[ "${os_name}" == "unsupported" ]]; then
     log "Unsupported OS. This installer currently supports macOS and Linux."
@@ -125,9 +154,11 @@ main() {
   install_dep_or_fail git "${os_name}"
   install_dep_or_fail go "${os_name}"
 
+  target_ref="$(resolve_target_ref)"
+
   TMP_DIR="$(mktemp -d)"
-  log "Cloning ${REPO_URL} (ref=${PLANMARK_REF})..."
-  git clone --depth 1 --branch "${PLANMARK_REF}" "${REPO_URL}" "${TMP_DIR}/planmark"
+  log "Cloning ${REPO_URL} (ref=${target_ref})..."
+  git clone --depth 1 --branch "${target_ref}" "${REPO_URL}" "${TMP_DIR}/planmark"
 
   log "Building plan binary..."
   (
@@ -156,6 +187,7 @@ main() {
   log "  1) cd <your-project>"
   log "  2) plan init --dir . --format text"
   log "  3) plan compile --plan PLAN.md --out .planmark/tmp/plan.json"
+  log "Installed release/ref: ${target_ref}"
 }
 
 main "$@"

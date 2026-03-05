@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	stateVersionV01 = "v0.1"
-	defaultPlanBody = `# PLAN
+	stateVersionV01  = "v0.1"
+	agentsGuideStart = "<!-- planmark:init:start -->"
+	agentsGuideEnd   = "<!-- planmark:init:end -->"
+	defaultPlanBody  = `# PLAN
 
 - [ ] Example Task
   @id example.task
@@ -35,14 +37,43 @@ profiles:
 #   # api_key_env: OPENAI_API_KEY
 #   # timeout_seconds: 30
 `
+	defaultAgentsGuideBody = `<!-- planmark:init:start -->
+## PlanMark CLI Access (Managed)
+
+When operating in this project, you can use these ` + "`plan`" + ` commands:
+
+- ` + "`plan version --format text|json`" + `
+- ` + "`plan init [--dir <path>] [--plan <path>] [--state-dir <path>] [--config <path>] [--no-plan-template] [--no-config] [--format text|json]`" + `
+- ` + "`plan compile --plan <path> [--out <path>] [--state-dir <path>]`" + `
+- ` + "`plan doctor --plan <path> [--profile loose|build|exec] [--format text|rich|json]`" + `
+- ` + "`plan context <id> --plan <path> --level L0|L1|L2 [--format text|json]`" + `
+- ` + "`plan open <id|node-ref> --plan <path> [--format text|json]`" + `
+- ` + "`plan explain <id> --plan <path> [--format text|rich|json]`" + `
+- ` + "`plan handoff <id|node-ref> --plan <path> [--format text|json]`" + `
+- ` + "`plan query --plan <path> [--horizon now|next|later] [--ready|--blocked] [--format text|json]`" + `
+- ` + "`plan sync beads --plan <path> [--dry-run] [--format text|json]`" + `
+- ` + "`plan changes --plan <path> [--format text|json]`" + `
+
+Optional assistive (non-canonical) commands:
+
+- ` + "`plan ai suggest-accept <id> --plan <path> [--format text|json]`" + `
+- ` + "`plan ai summarize-closure <id> --plan <path> [--format text|json]`" + `
+- ` + "`plan ai draft-beads --plan <path> [--horizon all|now|next|later] [--limit N] [--format text|json]`" + `
+- ` + "`plan ai apply-fix --plan <path> [--approve] [--format text|json]`" + `
+
+Canonical truth remains ` + "`PLAN.md`" + `; Beads/tracker state is projected.
+<!-- planmark:init:end -->
+`
 )
 
 type initData struct {
 	ProjectDir  string   `json:"project_dir"`
 	PlanPath    string   `json:"plan_path"`
 	ConfigPath  string   `json:"config_path,omitempty"`
+	AgentsPath  string   `json:"agents_path"`
 	StateDir    string   `json:"state_dir"`
 	Created     []string `json:"created"`
+	Updated     []string `json:"updated"`
 	Existing    []string `json:"existing"`
 	NextCommand string   `json:"next_command"`
 }
@@ -101,6 +132,7 @@ func runInit(args []string, stdout io.Writer, stderr io.Writer) int {
 	configPath := resolvePath(*configPathFlag)
 
 	created := make([]string, 0, 8)
+	updated := make([]string, 0, 4)
 	existing := make([]string, 0, 8)
 
 	dirs := []string{
@@ -168,13 +200,28 @@ func runInit(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 	}
+	agentsPath := filepath.Join(root, "AGENTS.md")
+	agentsCreated, agentsUpdated, err := ensureAgentsGuide(agentsPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "write AGENTS.md: %v\n", err)
+		return protocol.ExitInternalError
+	}
+	if agentsCreated {
+		created = append(created, relToProject(root, agentsPath))
+	} else if agentsUpdated {
+		updated = append(updated, relToProject(root, agentsPath))
+	} else {
+		existing = append(existing, relToProject(root, agentsPath))
+	}
 
 	result := initData{
 		ProjectDir:  root,
 		PlanPath:    planPath,
 		ConfigPath:  configPath,
+		AgentsPath:  agentsPath,
 		StateDir:    stateDir,
 		Created:     created,
+		Updated:     updated,
 		Existing:    existing,
 		NextCommand: "plan compile --plan " + planPath + " --out " + filepath.Join(stateDir, "tmp", "plan.json"),
 	}
@@ -215,6 +262,14 @@ func runInit(args []string, stdout io.Writer, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "- %s\n", p)
 			}
 		}
+		fmt.Fprintln(stdout, "Updated:")
+		if len(updated) == 0 {
+			fmt.Fprintln(stdout, "- (none)")
+		} else {
+			for _, p := range updated {
+				fmt.Fprintf(stdout, "- %s\n", p)
+			}
+		}
 		fmt.Fprintln(stdout, "Next:")
 		fmt.Fprintf(stdout, "- %s\n", result.NextCommand)
 	}
@@ -230,4 +285,42 @@ func relToProject(root string, path string) string {
 		return rel
 	}
 	return filepath.Clean(rel)
+}
+
+func ensureAgentsGuide(path string) (created bool, updated bool, err error) {
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return false, false, readErr
+	}
+	if errors.Is(readErr, os.ErrNotExist) {
+		if err := fsio.WriteFileAtomic(path, []byte(defaultAgentsGuideBody), 0o644); err != nil {
+			return false, false, err
+		}
+		return true, false, nil
+	}
+
+	current := string(raw)
+	next := upsertManagedBlock(current, defaultAgentsGuideBody)
+	if next == current {
+		return false, false, nil
+	}
+	if err := fsio.WriteFileAtomic(path, []byte(next), 0o644); err != nil {
+		return false, false, err
+	}
+	return false, true, nil
+}
+
+func upsertManagedBlock(current string, block string) string {
+	start := strings.Index(current, agentsGuideStart)
+	end := strings.Index(current, agentsGuideEnd)
+	if start >= 0 && end > start {
+		end += len(agentsGuideEnd)
+		replaced := current[:start] + block + current[end:]
+		return strings.TrimSpace(replaced) + "\n"
+	}
+	trimmed := strings.TrimSpace(current)
+	if trimmed == "" {
+		return block
+	}
+	return trimmed + "\n\n" + block
 }

@@ -78,7 +78,9 @@ PLANMARK_INSTALL_DIR="$HOME/bin"
 
 # repo/ref override
 PLANMARK_REPO="Vekram1/PlanMark"
-PLANMARK_REF="master"
+PLANMARK_CHANNEL="stable" # default; uses latest GitHub release tag
+PLANMARK_CHANNEL="edge"   # uses master
+PLANMARK_REF="v0.1.0"     # pin exact ref/tag/branch
 
 # disable automatic dependency install attempts
 PLANMARK_AUTO_INSTALL_DEPS=0
@@ -89,6 +91,26 @@ After install, initialize any project once:
 ```bash
 cd /path/to/your/project
 plan init --dir . --format text
+```
+
+## Updating PlanMark
+
+Stable update (recommended):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
+```
+
+Edge update (latest `master`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | PLANMARK_CHANNEL=edge bash
+```
+
+Pinned update:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | PLANMARK_REF=v0.1.0 bash
 ```
 
 ## Startup Guide
@@ -121,6 +143,7 @@ plan init --dir . --format text
 ```
 
 This creates project-local PlanMark state (`.planmark/`) and optional starter files if missing.
+It also creates or updates a managed block in `AGENTS.md` documenting available `plan` commands for coding agents.
 
 ### 4) Run the deterministic core workflow
 
