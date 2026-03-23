@@ -11,9 +11,9 @@ The current direction is:
 
 Current implementation note:
 
-- The current parser and metadata attachment code are narrower than this target language contract.
-- In the current binary, headings and checkbox lines are the primary recognized source nodes, and metadata attachment is simpler than the scope-based model described here.
-- This document describes the intended richer authoring model that later parser and semantic-policy work should implement.
+- The current parser and metadata attachment code are still narrower than this target language contract.
+- In the current binary, headings and checkbox lines remain the primary recognized source nodes, but their source slices now expand to structural scope boundaries and metadata ownership is partially scope-aware for heading sections versus checkbox blocks.
+- This document still describes a broader target language than the current implementation: heading-task promotion and richer nested structural modeling are follow-on work.
 
 This document defines:
 

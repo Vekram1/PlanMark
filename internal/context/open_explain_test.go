@@ -104,7 +104,7 @@ func TestOpenReturnsExactSlice(t *testing.T) {
 	if headingResult.TaskID != "" {
 		t.Fatalf("expected empty task id for non-task slice, got %q", headingResult.TaskID)
 	}
-	if strings.TrimSpace(headingResult.SliceText) != "# Overview" {
-		t.Fatalf("expected exact heading slice, got %q", headingResult.SliceText)
+	if !strings.Contains(headingResult.SliceText, "# Overview") || !strings.Contains(headingResult.SliceText, "- [ ] Task now") {
+		t.Fatalf("expected structural heading slice, got %q", headingResult.SliceText)
 	}
 }

@@ -50,7 +50,7 @@ func TestOpenSupportsNodeRefForNonTaskSlice(t *testing.T) {
 	if !strings.Contains(out.String(), "node_ref: "+headingRef) {
 		t.Fatalf("expected output to include heading node_ref, got %q", out.String())
 	}
-	if !strings.Contains(out.String(), "slice_text:\n# Overview") {
-		t.Fatalf("expected exact heading slice text, got %q", out.String())
+	if !strings.Contains(out.String(), "slice_text:\n# Overview") || !strings.Contains(out.String(), "- [ ] Task now") {
+		t.Fatalf("expected structural heading slice text, got %q", out.String())
 	}
 }

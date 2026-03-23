@@ -26,7 +26,7 @@ func TestMetadataParse(t *testing.T) {
 		t.Fatalf("expected known accept metadata entry, got %#v", parsed.KnownByKey["accept"])
 	}
 
-	wantOpaque := []MetadataEntry{{Key: "foo", Value: "custom opaque", Line: 6}}
+	wantOpaque := []MetadataEntry{{Key: "foo", Value: "custom opaque", Line: 6, Indent: 2}}
 	if !reflect.DeepEqual(parsed.Opaque, wantOpaque) {
 		t.Fatalf("opaque metadata mismatch\nwant=%#v\ngot=%#v", wantOpaque, parsed.Opaque)
 	}
