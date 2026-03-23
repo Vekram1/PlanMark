@@ -365,6 +365,13 @@ GitHub/Linear/Jira-style rendering:
 - acceptance section: `@accept` entries
 - provenance footer: plan id, source path/range, source hash
 
+Roadmap note:
+
+- markdown-first issue trackers should start from the `default` profile
+- staged Jira support should start with basic issue rendering before any custom-field-heavy mapping
+- agent-oriented trackers such as Ticket/Trekker/Beans should start from `agentic` or `handoff`
+- future tracker-local template names should stay as deterministic aliases over those profiles, not custom free-form templates
+
 The important point is that the author does not need to rewrite the plan per tracker. The adapter chooses the rendering shape; PLAN authoring stays tracker-neutral.
 
 ### 9.4 Agent handoff outcome

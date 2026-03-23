@@ -215,8 +215,16 @@ Notes:
 - Contract: PLAN remains canonical for structure/intent; tracker runtime fields are merged under explicit safe-pull rules.
 - Tracker rendering now flows through a tracker-neutral task projection layer before adapter-specific payloads are built.
 - Tracker adapters expose deterministic capability descriptors so rendering/template policy can validate backend support for body text, steps, child work, custom fields, and safe runtime overlays.
+- Built-in rendering profiles are deterministic named policies (`default`, `compact`, `agentic`, `handoff`) layered on top of the tracker-neutral projection.
+- Future adapter-local template names, if introduced, are expected to be deterministic aliases over those built-in profiles plus adapter-local field layout choices; they must not become arbitrary user-authored text templates in the canonical sync path.
+- The current proven adapters are `beads` and a GitHub Issues proof adapter.
 - Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
+- The GitHub proof adapter renders deterministic markdown issue title/body payloads from the same tracker-neutral projection and render-profile layer.
 - Sync planning hashes the full canonical tracker-neutral projection, so reserved fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
+- The staged adapter roadmap is now:
+  - markdown-issue adapters first (`linear`, `jira` phase 1 basic issue rendering)
+  - then agentic trackers with native machine-oriented child work (`ticket`, `trekker`, `beans`)
+  - then field-heavy enterprise adapters (`jira` phase 2 extended custom-field mappings)
 
 ## Semantic Derivation Policy Link
 
@@ -268,8 +276,32 @@ Rules:
   2. `.planmark.yaml` `ai:` values
   3. built-in defaults (no provider configured => local proposal-only behavior)
 
+### Tracker Sync Config Contract (`.planmark.yaml`)
+
+Tracker adapter and render-profile selection are repository-local configuration.
+
+Supported mapping:
+
+```yaml
+tracker:
+  adapter: beads
+  profile: default
+```
+
+Rules:
+- Unknown keys under `tracker:` are rejected deterministically.
+- Tracker config values contribute to effective config hashing for reproducibility diagnostics.
+- Selection precedence for `plan sync`:
+  1. explicit CLI flags (`--adapter`, `--profile`)
+  2. positional sync target (`plan sync beads`, `plan sync github`)
+  3. `.planmark.yaml` `tracker:` values
+  4. built-in defaults (`adapter=beads`, adapter default render profile)
+- Explicit CLI adapter selection must not conflict with an explicit positional target.
+- Current repository-local tracker selection is `adapter` + `profile`.
+- Future adapter-local template names, if added, must resolve deterministically to an adapter plus a built-in profile-compatible render policy.
+
 ## Non-Goals for This Draft
 
 - JSON Schema publication in this task.
 - Full parser backend matrix in this task.
-- Multi-tracker behavior standardization in this task.
+- Full multi-tracker standardization beyond the current proven adapters and staged roadmap.

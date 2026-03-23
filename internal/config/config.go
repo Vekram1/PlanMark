@@ -20,7 +20,13 @@ type Resolved struct {
 	Path    string
 	Profile string
 	Hash    string
+	Tracker TrackerResolved
 	AI      AIResolved
+}
+
+type TrackerResolved struct {
+	Adapter string
+	Profile string
 }
 
 type AIResolved struct {
@@ -36,6 +42,7 @@ type rawConfig struct {
 	Profile       string
 	Profiles      map[string]string
 	Policies      map[string]string
+	Tracker       map[string]string
 	AI            map[string]string
 }
 
@@ -49,6 +56,7 @@ type hashPayload struct {
 	Profile       string   `json:"profile,omitempty"`
 	Profiles      []hashKV `json:"profiles,omitempty"`
 	Policies      []hashKV `json:"policies,omitempty"`
+	Tracker       []hashKV `json:"tracker,omitempty"`
 	AI            []hashKV `json:"ai,omitempty"`
 }
 
@@ -79,12 +87,17 @@ func LoadForPlan(planPath string) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, err
 	}
+	trackerResolved, err := resolveTracker(cfg.Tracker)
+	if err != nil {
+		return Resolved{}, err
+	}
 
 	return Resolved{
 		Found:   true,
 		Path:    cfgPath,
 		Profile: profile,
 		Hash:    canonicalHash(cfg),
+		Tracker: trackerResolved,
 		AI:      ai,
 	}, nil
 }
@@ -120,6 +133,7 @@ func parseYAML(content []byte) (rawConfig, error) {
 	cfg := rawConfig{
 		Profiles: make(map[string]string),
 		Policies: make(map[string]string),
+		Tracker:  make(map[string]string),
 		AI:       make(map[string]string),
 	}
 	lines := strings.Split(string(content), "\n")
@@ -147,7 +161,7 @@ func parseYAML(content []byte) (rawConfig, error) {
 				cfg.SchemaVersion = value
 			case "profile":
 				cfg.Profile = value
-			case "profiles", "policies", "ai":
+			case "profiles", "policies", "tracker", "ai":
 				if value != "" {
 					return rawConfig{}, fmt.Errorf("line %d: %s must be a mapping", lineNumber, key)
 				}
@@ -173,6 +187,8 @@ func parseYAML(content []byte) (rawConfig, error) {
 			cfg.Profiles[key] = value
 		case "policies":
 			cfg.Policies[key] = value
+		case "tracker":
+			cfg.Tracker[key] = value
 		case "ai":
 			cfg.AI[key] = value
 		default:
@@ -207,6 +223,7 @@ func canonicalHash(cfg rawConfig) string {
 		Profile:       strings.TrimSpace(cfg.Profile),
 		Profiles:      sortedMap(cfg.Profiles),
 		Policies:      sortedMap(cfg.Policies),
+		Tracker:       sortedMap(cfg.Tracker),
 		AI:            sortedMap(cfg.AI),
 	}
 	b, _ := json.Marshal(payload)
@@ -270,5 +287,22 @@ func resolveAI(entries map[string]string) (AIResolved, error) {
 		BaseURL:    strings.TrimSpace(entries["base_url"]),
 		APIKeyEnv:  strings.TrimSpace(entries["api_key_env"]),
 		TimeoutSec: strings.TrimSpace(entries["timeout_seconds"]),
+	}, nil
+}
+
+func resolveTracker(entries map[string]string) (TrackerResolved, error) {
+	allowed := map[string]struct{}{
+		"adapter": {},
+		"profile": {},
+	}
+	for key := range entries {
+		trimmed := strings.TrimSpace(key)
+		if _, ok := allowed[trimmed]; !ok {
+			return TrackerResolved{}, fmt.Errorf("parse %s: unknown tracker key %q", fileName, trimmed)
+		}
+	}
+	return TrackerResolved{
+		Adapter: strings.TrimSpace(entries["adapter"]),
+		Profile: strings.TrimSpace(entries["profile"]),
 	}, nil
 }

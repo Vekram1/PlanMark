@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/compile"
+	"github.com/vikramoddiraju/planmark/internal/config"
 	"github.com/vikramoddiraju/planmark/internal/journal"
 	"github.com/vikramoddiraju/planmark/internal/protocol"
 	"github.com/vikramoddiraju/planmark/internal/syncplanner"
@@ -45,13 +46,20 @@ type syncPreviewOperation struct {
 }
 
 type beadsSyncAdapter interface {
-	SeedFromSyncManifest(manifest tracker.BeadsSyncManifest)
+	SeedFromSyncManifest(manifest tracker.SyncManifest)
 	PushTask(ctx context.Context, task tracker.TaskProjection) (tracker.PushResult, error)
 	WriteSyncManifest(stateDir string) (string, error)
+	SetRenderProfile(profile tracker.RenderProfile)
+	ValidateTask(task tracker.TaskProjection) error
+	Capabilities() tracker.TrackerCapabilities
 }
 
 var newBeadsSyncAdapter = func() beadsSyncAdapter {
 	return tracker.NewBeadsAdapter()
+}
+
+var newGitHubSyncAdapter = func() beadsSyncAdapter {
+	return tracker.NewGitHubAdapter()
 }
 
 func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -59,7 +67,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	filteredArgs := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if strings.HasPrefix(arg, "--plan=") || strings.HasPrefix(arg, "--state-dir=") || strings.HasPrefix(arg, "--format=") {
+		if strings.HasPrefix(arg, "--plan=") || strings.HasPrefix(arg, "--state-dir=") || strings.HasPrefix(arg, "--format=") || strings.HasPrefix(arg, "--adapter=") || strings.HasPrefix(arg, "--profile=") {
 			filteredArgs = append(filteredArgs, arg)
 			continue
 		}
@@ -67,7 +75,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			filteredArgs = append(filteredArgs, arg)
 			continue
 		}
-		if arg == "--plan" || arg == "--state-dir" || arg == "--format" || arg == "--deletion-policy" {
+		if arg == "--plan" || arg == "--state-dir" || arg == "--format" || arg == "--deletion-policy" || arg == "--adapter" || arg == "--profile" {
 			filteredArgs = append(filteredArgs, arg)
 			if i+1 < len(args) {
 				i++
@@ -94,6 +102,8 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "", "path to PLAN markdown file")
 	stateDir := fs.String("state-dir", ".planmark", "path to planmark local state directory")
+	adapterFlag := fs.String("adapter", "", "tracker adapter: beads|github")
+	profileFlag := fs.String("profile", "", "render profile: default|compact|agentic|handoff")
 	deletionPolicy := fs.String("deletion-policy", string(syncplanner.DefaultDeletionPolicy()), "deletion policy for PLAN removals: mark-stale|close|detach|delete")
 	dryRun := fs.Bool("dry-run", false, "preview without writing sync manifest")
 	format := fs.String("format", "text", "output format: text|json")
@@ -107,7 +117,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	remaining := fs.Args()
 	if len(remaining) > 1 {
-		fmt.Fprintln(stderr, "usage: plan sync beads --plan <path> [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan sync [beads|github] --plan <path> [--adapter beads|github] [--profile default|compact|agentic|handoff] [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
 		return protocol.ExitUsageError
 	}
 	if len(remaining) == 1 {
@@ -117,12 +127,18 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 		target = remaining[0]
 	}
-	if strings.TrimSpace(target) != "beads" {
-		fmt.Fprintln(stderr, "usage: plan sync beads --plan <path> [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
-		return protocol.ExitUsageError
-	}
 	if strings.TrimSpace(*planPath) == "" {
 		fmt.Fprintln(stderr, "missing --plan")
+		return protocol.ExitUsageError
+	}
+	cfgResolved, err := config.LoadForPlan(*planPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "load config: %v\n", err)
+		return protocol.ExitInternalError
+	}
+	resolvedAdapter, resolvedProfile, err := resolveSyncSelection(strings.TrimSpace(target), strings.TrimSpace(*adapterFlag), strings.TrimSpace(*profileFlag), cfgResolved)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
 		return protocol.ExitUsageError
 	}
 	resolvedDeletionPolicy, err := syncplanner.ParseDeletionPolicy(*deletionPolicy)
@@ -164,12 +180,19 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		}
 	}
 
-	adapter := newBeadsSyncAdapter()
+	adapter, err := instantiateSyncAdapter(resolvedAdapter)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return protocol.ExitUsageError
+	}
+	if resolvedProfile != "" {
+		adapter.SetRenderProfile(tracker.RenderProfile(resolvedProfile))
+	}
 	resolvedStateDir := strings.TrimSpace(*stateDir)
 	if resolvedStateDir == "" {
 		resolvedStateDir = ".planmark"
 	}
-	priorManifest, err := loadBeadsManifest(filepath.Join(resolvedStateDir, "sync", "beads-manifest.json"))
+	priorManifest, err := loadSyncManifest(syncManifestPath(resolvedStateDir, resolvedAdapter))
 	if err != nil {
 		fmt.Fprintf(stderr, "load sync manifest: %v\n", err)
 		return protocol.ExitInternalError
@@ -177,7 +200,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	adapter.SeedFromSyncManifest(priorManifest)
 
 	result := syncBeadsResult{
-		Target:         "beads",
+		Target:         resolvedAdapter,
 		PlanPath:       *planPath,
 		StateDir:       resolvedStateDir,
 		DryRun:         *dryRun,
@@ -195,18 +218,19 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 		projection := tracker.TaskProjection{
-			ID:               task.ID,
-			Title:            task.Title,
-			Horizon:          task.Horizon,
-			SourcePath:       compiled.PlanPath,
-			SourceStartLine:  node.startLine,
-			SourceEndLine:    node.endLine,
-			SourceHash:       node.sliceHash,
-			NodeRef:          task.NodeRef,
-			CompileID:        compileID,
-			Deps:             append([]string(nil), task.Deps...),
-			Accept:           append([]string(nil), task.Accept...),
-			EvidenceNodeRefs: append([]string(nil), task.EvidenceNodeRefs...),
+			ID:      task.ID,
+			Title:   task.Title,
+			Horizon: task.Horizon,
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    task.NodeRef,
+				Path:       compiled.PlanPath,
+				StartLine:  node.startLine,
+				EndLine:    node.endLine,
+				SourceHash: node.sliceHash,
+				CompileID:  compileID,
+			},
+			Dependencies: append([]string(nil), task.Deps...),
+			Acceptance:   append([]string(nil), task.Accept...),
 		}
 		if len(task.Steps) > 0 {
 			projection.Steps = make([]tracker.TaskProjectionStep, 0, len(task.Steps))
@@ -217,6 +241,16 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 					Checked: step.Checked,
 				})
 			}
+		}
+		if len(task.EvidenceNodeRefs) > 0 {
+			projection.Evidence = make([]tracker.TaskProjectionEvidence, 0, len(task.EvidenceNodeRefs))
+			for _, ref := range task.EvidenceNodeRefs {
+				projection.Evidence = append(projection.Evidence, tracker.TaskProjectionEvidence{NodeRef: ref})
+			}
+		}
+		if err := adapter.ValidateTask(projection); err != nil {
+			fmt.Fprintf(stderr, "validate task projection: %v\n", err)
+			return protocol.ExitInternalError
 		}
 		hash, err := syncplanner.ProjectionHashForTask(projection)
 		if err != nil {
@@ -418,7 +452,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		payload := protocol.Envelope[syncBeadsResult]{
 			SchemaVersion: protocol.SchemaVersionV01,
 			ToolVersion:   CLIVersion,
-			Command:       "sync beads",
+			Command:       "sync " + resolvedAdapter,
 			Status:        "ok",
 			Data:          result,
 		}
@@ -445,24 +479,77 @@ func semanticCompileID(compiled any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func loadBeadsManifest(path string) (tracker.BeadsSyncManifest, error) {
+func resolveSyncSelection(target string, adapterFlag string, profileFlag string, cfg config.Resolved) (string, string, error) {
+	resolvedAdapter := adapterFlag
+	if resolvedAdapter == "" {
+		resolvedAdapter = target
+	}
+	if resolvedAdapter == "" {
+		resolvedAdapter = strings.TrimSpace(cfg.Tracker.Adapter)
+	}
+	if resolvedAdapter == "" {
+		resolvedAdapter = "beads"
+	}
+	if adapterFlag != "" && target != "" && adapterFlag != target {
+		return "", "", fmt.Errorf("--adapter %q conflicts with positional target %q", adapterFlag, target)
+	}
+	switch resolvedAdapter {
+	case "beads", "github":
+	default:
+		return "", "", fmt.Errorf("unsupported sync adapter %q", resolvedAdapter)
+	}
+	resolvedProfile := profileFlag
+	if resolvedProfile == "" {
+		resolvedProfile = strings.TrimSpace(cfg.Tracker.Profile)
+	}
+	if resolvedProfile != "" {
+		switch tracker.RenderProfile(strings.ToLower(resolvedProfile)) {
+		case tracker.RenderProfileDefault, tracker.RenderProfileCompact, tracker.RenderProfileAgentic, tracker.RenderProfileHandoff:
+			resolvedProfile = strings.ToLower(resolvedProfile)
+		default:
+			return "", "", fmt.Errorf("unsupported render profile %q", resolvedProfile)
+		}
+	}
+	return resolvedAdapter, resolvedProfile, nil
+}
+
+func instantiateSyncAdapter(name string) (beadsSyncAdapter, error) {
+	switch strings.TrimSpace(name) {
+	case "beads":
+		return newBeadsSyncAdapter(), nil
+	case "github":
+		return newGitHubSyncAdapter(), nil
+	default:
+		return nil, fmt.Errorf("unsupported sync adapter %q", name)
+	}
+}
+
+func syncManifestPath(stateDir string, adapterName string) string {
+	fileName := adapterName + "-manifest.json"
+	if strings.TrimSpace(adapterName) == "beads" {
+		fileName = "beads-manifest.json"
+	}
+	return filepath.Join(stateDir, "sync", fileName)
+}
+
+func loadSyncManifest(path string) (tracker.SyncManifest, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return tracker.BeadsSyncManifest{
-				SchemaVersion: tracker.BeadsManifestSchemaVersionV01,
+			return tracker.SyncManifest{
+				SchemaVersion: tracker.SyncManifestSchemaVersionV01,
 				Entries:       nil,
 			}, nil
 		}
-		return tracker.BeadsSyncManifest{}, err
+		return tracker.SyncManifest{}, err
 	}
 
-	var manifest tracker.BeadsSyncManifest
+	var manifest tracker.SyncManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return tracker.BeadsSyncManifest{}, fmt.Errorf("decode manifest: %w", err)
+		return tracker.SyncManifest{}, fmt.Errorf("decode manifest: %w", err)
 	}
 	if strings.TrimSpace(manifest.SchemaVersion) == "" {
-		return tracker.BeadsSyncManifest{}, fmt.Errorf("decode manifest: missing schema_version")
+		return tracker.SyncManifest{}, fmt.Errorf("decode manifest: missing schema_version")
 	}
 	return manifest, nil
 }

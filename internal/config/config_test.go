@@ -34,7 +34,7 @@ func TestLoadForPlanUsesNearestConfigAndProfilesDoctor(t *testing.T) {
 	}
 
 	configPath := filepath.Join(repoRoot, ".planmark.yaml")
-	configBody := "schema_version: v0.1\nprofiles:\n  doctor: exec\npolicies:\n  determinism: v0.1\nai:\n  provider: openai_compatible\n  model: gpt-4o-mini\n  base_url: http://127.0.0.1:8080/v1\n  api_key_env: PLANMARK_AI_KEY\n"
+	configBody := "schema_version: v0.1\nprofiles:\n  doctor: exec\npolicies:\n  determinism: v0.1\ntracker:\n  adapter: github\n  profile: compact\nai:\n  provider: openai_compatible\n  model: gpt-4o-mini\n  base_url: http://127.0.0.1:8080/v1\n  api_key_env: PLANMARK_AI_KEY\n"
 	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
 		t.Fatalf("write config fixture: %v", err)
 	}
@@ -59,6 +59,12 @@ func TestLoadForPlanUsesNearestConfigAndProfilesDoctor(t *testing.T) {
 	}
 	if resolved.Hash == "" {
 		t.Fatalf("expected non-empty hash")
+	}
+	if resolved.Tracker.Adapter != "github" {
+		t.Fatalf("expected tracker adapter github, got %q", resolved.Tracker.Adapter)
+	}
+	if resolved.Tracker.Profile != "compact" {
+		t.Fatalf("expected tracker profile compact, got %q", resolved.Tracker.Profile)
 	}
 	if resolved.AI.Provider != "openai_compatible" {
 		t.Fatalf("expected ai provider openai_compatible, got %q", resolved.AI.Provider)
@@ -103,6 +109,22 @@ func TestLoadForPlanRejectsUnknownAIKey(t *testing.T) {
 
 	if _, err := LoadForPlan(planPath); err == nil {
 		t.Fatalf("expected parse error for unknown ai key")
+	}
+}
+
+func TestLoadForPlanRejectsUnknownTrackerKey(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	if err := os.WriteFile(planPath, []byte("- [ ] Task\n  @id task.one\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	configPath := filepath.Join(tmp, ".planmark.yaml")
+	if err := os.WriteFile(configPath, []byte("tracker:\n  unsupported: x\n"), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	if _, err := LoadForPlan(planPath); err == nil {
+		t.Fatalf("expected parse error for unknown tracker key")
 	}
 }
 
