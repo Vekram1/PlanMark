@@ -276,7 +276,120 @@ Human authoring:
 
 ---
 
-## 9. Summary
+## 9. Concrete Before/After Examples
+
+These examples show the practical improvement over the current thin projection model.
+
+### 9.1 Same intent, current narrow authoring
+
+```md
+- [ ] Add migration
+  @id api.migrate
+  @horizon now
+  @deps api.schema
+  @accept cmd:go test ./...
+```
+
+What a tracker adapter can reliably project today:
+
+- title: `Add migration`
+- identity: `api.migrate`
+- dependency edge: `api.schema`
+- acceptance digest or raw acceptance line
+- provenance: path, line range, source hash
+
+What it lacks:
+
+- rationale for why the migration must be additive
+- ordered execution steps
+- rollback notes
+- supporting table or example SQL
+
+### 9.2 Same intent, richer Markdown authoring
+
+~~~md
+## Add migration
+@id api.migrate
+@horizon now
+@deps api.schema
+@accept cmd:go test ./...
+@rollback restore snapshot and revert migration file
+
+We need additive rollout because older workers may still read legacy columns.
+
+- [ ] Write additive migration
+- [ ] Verify rollback path
+- [ ] Run local validation
+
+| phase | rule |
+| --- | --- |
+| deploy | additive only |
+| cleanup | after verification |
+
+```sql
+ALTER TABLE ...
+```
+~~~
+
+What the semantic task can carry under the richer model:
+
+- canonical task identity and readiness metadata
+- scoped rationale paragraph
+- structured execution steps
+- rollback note
+- scoped evidence blocks such as tables and SQL examples
+- stable provenance for the whole task scope
+
+### 9.3 Tracker rendering outcome
+
+These are illustrative target renderings for future adapters, not a claim that every tracker shape below is already implemented in the current binary.
+
+Beads-style rendering:
+
+- title: `Add migration`
+- body sections:
+  - rationale paragraph
+  - execution checklist
+  - rollback note
+  - optional evidence excerpt
+- runtime overlays still owned by tracker:
+  - status
+  - assignee
+  - priority
+
+GitHub/Linear/Jira-style rendering:
+
+- title: `Add migration`
+- description: rationale + scoped notes
+- checklist or adapter-specific child-work representation for ordered execution steps
+- acceptance section: `@accept` entries
+- provenance footer: plan id, source path/range, source hash
+
+The important point is that the author does not need to rewrite the plan per tracker. The adapter chooses the rendering shape; PLAN authoring stays tracker-neutral.
+
+### 9.4 Agent handoff outcome
+
+Current narrow context tends to look like:
+
+- one task line
+- a few metadata values
+- dependency IDs
+
+Richer scoped context can include:
+
+- task title and canonical identity
+- rationale paragraph
+- ordered execution steps
+- rollback note
+- selected evidence blocks
+- dependency closure pointers
+- exact provenance back to source
+
+That is the difference between “here is the task label” and “here is the bounded unit of work.”
+
+---
+
+## 10. Summary
 
 The intended contract is:
 

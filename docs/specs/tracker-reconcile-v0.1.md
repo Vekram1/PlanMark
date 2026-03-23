@@ -66,6 +66,29 @@ These classes are machine-facing contract surfaces for dry-run/apply behavior.
 - Conflicts are explicit when runtime overlay and canonical projection updates cannot be merged under safe-field rules.
 - Conflict records include stable identity and reason codes for deterministic retries/resolution.
 
+## Tracker-Neutral Rendering Implication
+
+The reconcile policy is intentionally tracker-neutral even when the first implementation targets Beads.
+
+- Semantic task identity, provenance, readiness metadata, and scoped evidence come from PLAN/IR.
+- Tracker adapters choose how to render that semantic task into the target system's available fields.
+- Runtime overlays remain tracker-owned regardless of rendering shape.
+
+Illustrative target mapping for the same semantic task:
+
+- Beads:
+  - title from task title
+  - body from rationale, steps, acceptance lines, rollback note, provenance footer
+  - safe-pull runtime fields remain `status`, `assignee`, `priority`
+- GitHub Issues / Linear / Jira style adapters:
+  - title from task title
+  - description/body from scoped rationale and evidence
+  - checklist or adapter-specific child-work representation from ordered execution steps
+  - provenance footer or custom metadata field from canonical source mapping
+
+The operation classes do not change across trackers.
+Only payload rendering changes.
+
 ## Dry-Run / Apply Consistency
 
 - Dry-run and apply must consume the same operation plan.
