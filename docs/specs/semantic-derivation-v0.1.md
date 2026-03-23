@@ -12,8 +12,8 @@ Define a mechanical, replayable mapping from Source IR nodes/metadata into task-
 
 Current implementation note:
 
-- The current binary derives tasks from a narrower source-node set than the full target contract described here.
-- This policy defines the intended deterministic promotion rules that future parser and context work should implement without heuristic drift.
+- The current binary derives tasks from a narrower source-node set than the full target contract described here, but it now computes deterministic scope boundaries for heading sections and checkbox blocks, uses partially scope-aware metadata ownership for those shapes, promotes headings with explicit task metadata, and models nested checkbox items as default steps.
+- This policy still describes a broader target than what is currently implemented: scoped evidence promotion remains partial, and the system still lacks a general structural Markdown layer for non-heading/non-checkbox blocks.
 
 ## Inputs and Preconditions
 

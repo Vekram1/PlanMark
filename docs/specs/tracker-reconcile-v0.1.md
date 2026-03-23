@@ -66,6 +66,49 @@ These classes are machine-facing contract surfaces for dry-run/apply behavior.
 - Conflicts are explicit when runtime overlay and canonical projection updates cannot be merged under safe-field rules.
 - Conflict records include stable identity and reason codes for deterministic retries/resolution.
 
+## Tracker-Neutral Rendering Implication
+
+The reconcile policy is intentionally tracker-neutral even when the first implementation targets Beads.
+
+- Semantic task identity, provenance, readiness metadata, and scoped evidence come from PLAN/IR.
+- A tracker-neutral `TaskProjectionV2` sits between Semantic IR and adapter rendering so adapters consume canonical task semantics rather than Beads-specific fields.
+- Each adapter also exposes deterministic `TrackerCapabilities` so future rendering/template policy can validate backend support without hardcoding tracker assumptions into the compiler.
+- Tracker adapters choose how to render that semantic task into the target system's available fields.
+- Runtime overlays remain tracker-owned regardless of rendering shape.
+- The current Beads projection payload schema is `v0.2` and is built from that projection layer, carrying the subset of adapter-neutral task fields that Beads currently renders:
+  - `horizon`
+  - ordered `dependencies`
+  - ordered execution `steps`
+  - ordered `evidence_node_refs`
+  - provenance/source mapping and acceptance digest
+- Sync planning hashes the full canonical `TaskProjectionV2`, including reserved projection fields such as structured `sections` and evidence `kind`, so semantic projection changes are still detected before every adapter renders every field.
+
+Current capability descriptor categories:
+
+- title support
+- body text mode (`unsupported` | `plain` | `markdown`)
+- ordered step/checklist support (`unsupported` | `rendered` | `native`)
+- child-work support (`unsupported` | `rendered` | `native`)
+- custom-field support (`unsupported` | `rendered` | `native`)
+- safe runtime overlay support (`status`, `assignee`, `priority`)
+
+The descriptor is deterministic adapter metadata. It does not change the canonical task projection or reconcile operation classes.
+
+Illustrative target mapping for the same semantic task:
+
+- Beads:
+  - title from task title
+  - body from rationale, steps, acceptance lines, rollback note, provenance footer
+  - safe-pull runtime fields remain `status`, `assignee`, `priority`
+- GitHub Issues / Linear / Jira style adapters:
+  - title from task title
+  - description/body from scoped rationale and evidence
+  - checklist or adapter-specific child-work representation from ordered execution steps
+  - provenance footer or custom metadata field from canonical source mapping
+
+The operation classes do not change across trackers.
+Only payload rendering changes.
+
 ## Dry-Run / Apply Consistency
 
 - Dry-run and apply must consume the same operation plan.

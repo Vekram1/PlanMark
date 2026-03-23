@@ -53,6 +53,39 @@ func TestExplainReportsBlockers(t *testing.T) {
 	}
 }
 
+func TestExplainIncludesStepAndEvidenceCounts(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"- [ ] write migration",
+		"### Evidence",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	explained, err := Explain(compiled, "api.migrate")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	if explained.StepCount != 1 {
+		t.Fatalf("expected step_count=1, got %#v", explained)
+	}
+	if len(explained.EvidenceNodeRefs) != 1 {
+		t.Fatalf("expected one evidence node ref, got %#v", explained.EvidenceNodeRefs)
+	}
+}
+
 func TestOpenReturnsExactSlice(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
@@ -104,7 +137,40 @@ func TestOpenReturnsExactSlice(t *testing.T) {
 	if headingResult.TaskID != "" {
 		t.Fatalf("expected empty task id for non-task slice, got %q", headingResult.TaskID)
 	}
-	if strings.TrimSpace(headingResult.SliceText) != "# Overview" {
-		t.Fatalf("expected exact heading slice, got %q", headingResult.SliceText)
+	if !strings.Contains(headingResult.SliceText, "# Overview") || !strings.Contains(headingResult.SliceText, "- [ ] Task now") {
+		t.Fatalf("expected structural heading slice, got %q", headingResult.SliceText)
+	}
+}
+
+func TestOpenTaskIncludesStepsAndEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"- [ ] write migration",
+		"### Evidence",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	result, err := Open(compiled, "api.migrate")
+	if err != nil {
+		t.Fatalf("open task: %v", err)
+	}
+	if len(result.Steps) != 1 || result.Steps[0].Title != "write migration" {
+		t.Fatalf("unexpected steps in open result: %#v", result.Steps)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].Kind != "heading" {
+		t.Fatalf("unexpected evidence in open result: %#v", result.Evidence)
 	}
 }

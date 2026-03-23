@@ -17,6 +17,8 @@ type ExplainResult struct {
 	TaskID            string           `json:"task_id"`
 	Title             string           `json:"title"`
 	Horizon           string           `json:"horizon,omitempty"`
+	StepCount         int              `json:"step_count,omitempty"`
+	EvidenceNodeRefs  []string         `json:"evidence_node_refs,omitempty"`
 	Runnable          bool             `json:"runnable"`
 	Blockers          []ExplainBlocker `json:"blockers,omitempty"`
 	SuggestedMetadata []string         `json:"suggested_metadata,omitempty"`
@@ -42,10 +44,12 @@ func Explain(plan ir.PlanIR, taskID string) (ExplainResult, error) {
 	}
 
 	result := ExplainResult{
-		TaskID:   task.ID,
-		Title:    task.Title,
-		Horizon:  task.Horizon,
-		Runnable: true,
+		TaskID:           task.ID,
+		Title:            task.Title,
+		Horizon:          task.Horizon,
+		StepCount:        len(task.Steps),
+		EvidenceNodeRefs: append([]string(nil), task.EvidenceNodeRefs...),
+		Runnable:         true,
 	}
 
 	taskByID := make(map[string]struct{}, len(plan.Semantic.Tasks))

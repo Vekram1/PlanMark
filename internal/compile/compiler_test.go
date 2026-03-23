@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vikramoddiraju/planmark/internal/ir"
 )
 
 func TestSourceRanges(t *testing.T) {
@@ -30,11 +32,51 @@ func TestSourceRanges(t *testing.T) {
 		if n.Slice.StartLine <= 0 || n.Slice.EndLine < n.Slice.StartLine {
 			t.Fatalf("invalid source range for node %q: %+v", n.Node.Text, n.Slice)
 		}
-		if n.Slice.StartLine != n.Node.Line || n.Slice.EndLine != n.Node.Line {
-			t.Fatalf("expected line-precise range for node %q: node_line=%d slice=%d-%d", n.Node.Text, n.Node.Line, n.Slice.StartLine, n.Slice.EndLine)
+		if n.Slice.StartLine != n.Node.Line {
+			t.Fatalf("expected source range for node %q to start at node line %d, got %d", n.Node.Text, n.Node.Line, n.Slice.StartLine)
+		}
+		if n.Slice.EndLine < n.Node.Line {
+			t.Fatalf("expected source range for node %q to include node line %d, got %d-%d", n.Node.Text, n.Node.Line, n.Slice.StartLine, n.Slice.EndLine)
 		}
 		if strings.TrimSpace(n.Slice.Text) == "" {
 			t.Fatalf("expected non-empty slice text for node %q", n.Node.Text)
+		}
+	}
+}
+
+func TestStructuralNodeScopes(t *testing.T) {
+	src := strings.Join([]string{
+		"# Root",
+		"",
+		"## Alpha",
+		"- [ ] First checkbox",
+		"  @id alpha.first",
+		"  child note",
+		"- [ ] Second checkbox",
+		"## Beta",
+		"section prose",
+	}, "\n")
+
+	compiled, err := CompileNodes("scopes.md", []byte(src), NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile nodes: %v", err)
+	}
+
+	want := map[string][2]int{
+		"Root":            {1, 9},
+		"Alpha":           {3, 7},
+		"First checkbox":  {4, 6},
+		"Second checkbox": {7, 7},
+		"Beta":            {8, 9},
+	}
+
+	for _, node := range compiled {
+		expected, ok := want[node.Node.Text]
+		if !ok {
+			t.Fatalf("unexpected node in scope test: %q", node.Node.Text)
+		}
+		if node.Slice.StartLine != expected[0] || node.Slice.EndLine != expected[1] {
+			t.Fatalf("unexpected scope for %q: got %d-%d want %d-%d", node.Node.Text, node.Slice.StartLine, node.Slice.EndLine, expected[0], expected[1])
 		}
 	}
 }
@@ -74,8 +116,8 @@ func TestMetadataAttachmentRules(t *testing.T) {
 		"# H1",
 		"@horizon now",
 		"- [ ] task one",
-		"@accept cmd:go test ./...",
-		"@unknown_thing opaque payload",
+		"  @accept cmd:go test ./...",
+		"  @unknown_thing opaque payload",
 		"## H2",
 		"@deps fixture.h1",
 	}, "\n")
@@ -119,6 +161,44 @@ func TestMetadataAttachmentRules(t *testing.T) {
 	}
 }
 
+func TestMetadataAttachmentPrefersEnclosingHeadingForUnindentedSectionMetadata(t *testing.T) {
+	src := strings.Join([]string{
+		"## Execution",
+		"@why section rationale",
+		"- [ ] task one",
+		"  @accept cmd:go test ./...",
+		"@risk section-wide caveat",
+		"- [ ] task two",
+	}, "\n")
+
+	nodes, err := NewParser(nil).Parse("attach-scope.md", []byte(src))
+	if err != nil {
+		t.Fatalf("parse nodes: %v", err)
+	}
+	parsed, err := ParseMetadata([]byte(src))
+	if err != nil {
+		t.Fatalf("parse metadata: %v", err)
+	}
+
+	attached := AttachMetadataToNodes(nodes, parsed)
+	if len(attached.Nodes) != len(nodes) {
+		t.Fatalf("expected %d attached nodes, got %d", len(nodes), len(attached.Nodes))
+	}
+
+	if got := attached.Nodes[0].KnownByKey["why"]; len(got) != 1 || got[0].Value != "section rationale" {
+		t.Fatalf("expected heading-level why metadata on section heading, got %#v", attached.Nodes[0].KnownByKey["why"])
+	}
+	if got := attached.Nodes[0].KnownByKey["risk"]; len(got) != 1 || got[0].Value != "section-wide caveat" {
+		t.Fatalf("expected heading-level risk metadata on section heading, got %#v", attached.Nodes[0].KnownByKey["risk"])
+	}
+	if got := attached.Nodes[1].KnownByKey["accept"]; len(got) != 1 || got[0].Value != "cmd:go test ./..." {
+		t.Fatalf("expected indented accept metadata on first checkbox, got %#v", attached.Nodes[1].KnownByKey["accept"])
+	}
+	if got := attached.Nodes[1].KnownByKey["risk"]; len(got) != 0 {
+		t.Fatalf("expected unindented section metadata not to attach to prior checkbox, got %#v", got)
+	}
+}
+
 func TestCompile(t *testing.T) {
 	planPath := filepath.Join("..", "..", "testdata", "plans", "mixed.md")
 	content, err := os.ReadFile(planPath)
@@ -151,6 +231,82 @@ func TestCompile(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected semantic task id fixture.mixed.ir, got %#v", compiled.Semantic.Tasks)
+	}
+}
+
+func TestCompilePromotesHeadingTaskWithExplicitTaskMetadata(t *testing.T) {
+	src := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"We need additive rollout first.",
+	}, "\n")
+
+	compiled, err := CompilePlan("heading-task.md", []byte(src), NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile heading task: %v", err)
+	}
+	if len(compiled.Semantic.Tasks) != 1 {
+		t.Fatalf("expected exactly one semantic task, got %#v", compiled.Semantic.Tasks)
+	}
+	task := compiled.Semantic.Tasks[0]
+	if task.ID != "api.migrate" {
+		t.Fatalf("expected heading task id api.migrate, got %#v", task)
+	}
+	if task.Title != "Add migration" {
+		t.Fatalf("expected heading task title Add migration, got %#v", task)
+	}
+	if task.NodeRef == "" {
+		t.Fatalf("expected heading task node_ref")
+	}
+}
+
+func TestCompileTreatsNestedCheckboxesAsStepsByDefault(t *testing.T) {
+	src := strings.Join([]string{
+		"## Rollout",
+		"- [ ] Parent task",
+		"  @id rollout.parent",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  - [ ] write migration",
+		"  - [x] run verification",
+		"- [ ] Sibling task",
+		"  @id rollout.sibling",
+	}, "\n")
+
+	compiled, err := CompilePlan("nested-steps.md", []byte(src), NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile nested steps plan: %v", err)
+	}
+	if len(compiled.Semantic.Tasks) != 2 {
+		t.Fatalf("expected 2 semantic tasks, got %#v", compiled.Semantic.Tasks)
+	}
+
+	var parent ir.Task
+	for _, task := range compiled.Semantic.Tasks {
+		if task.ID == "rollout.parent" {
+			parent = task
+		}
+		if strings.Contains(task.Title, "write migration") || strings.Contains(task.Title, "run verification") {
+			t.Fatalf("expected nested checkbox not to become standalone task: %#v", task)
+		}
+	}
+	if parent.ID == "" {
+		t.Fatalf("expected rollout.parent task, got %#v", compiled.Semantic.Tasks)
+	}
+	if len(parent.Steps) != 2 {
+		t.Fatalf("expected 2 nested steps, got %#v", parent.Steps)
+	}
+	if parent.Steps[0].Title != "write migration" || parent.Steps[1].Title != "run verification" {
+		t.Fatalf("unexpected step titles: %#v", parent.Steps)
+	}
+
+	for _, candidate := range compiled.Semantic.TaskCandidates {
+		if strings.Contains(candidate.Title, "write migration") || strings.Contains(candidate.Title, "run verification") {
+			t.Fatalf("expected nested checkbox not to become standalone task candidate: %#v", candidate)
+		}
 	}
 }
 

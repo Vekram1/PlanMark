@@ -122,8 +122,16 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 
 	semanticTasks := make([]ir.Task, 0)
 	taskCandidates := make([]ir.TaskCandidate, 0)
+	parentByIndex := structuralParentIndexes(extractNodes(compiled))
+	promotedHeadingByIndex := make(map[int]struct{})
 	for idx, attached := range attachments.Nodes {
-		if isTaskCandidateNode(attached.Node) {
+		if isPromotedHeadingTask(attached.Node, attached.KnownByKey) {
+			promotedHeadingByIndex[idx] = struct{}{}
+		}
+	}
+
+	for idx, attached := range attachments.Nodes {
+		if isTaskCandidateNode(idx, attached.Node, attachments.Nodes, parentByIndex, promotedHeadingByIndex) {
 			taskCandidates = append(taskCandidates, ir.TaskCandidate{
 				NodeRef:   nodeRefs[idx],
 				Path:      filepath.ToSlash(planPath),
@@ -135,9 +143,19 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 			})
 		}
 
-		if attached.Node.Kind != NodeKindCheckbox {
+		switch attached.Node.Kind {
+		case NodeKindHeading:
+			if _, ok := promotedHeadingByIndex[idx]; !ok {
+				continue
+			}
+		case NodeKindCheckbox:
+			if isStepCheckbox(idx, attachments.Nodes, parentByIndex, promotedHeadingByIndex) {
+				continue
+			}
+		default:
 			continue
 		}
+
 		nodeRef := nodeRefs[idx]
 		taskID := firstKnownValue(attached.KnownByKey, "id")
 		if taskID == "" {
@@ -151,6 +169,8 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 			Deps:    splitCSVValues(attached.KnownByKey["deps"]),
 			Accept:  valuesOf(attached.KnownByKey["accept"]),
 		}
+		task.Steps = descendantSteps(idx, attachments.Nodes, compiled, nodeRefs, parentByIndex, promotedHeadingByIndex)
+		task.EvidenceNodeRefs = descendantEvidenceNodeRefs(idx, attachments.Nodes, nodeRefs, parentByIndex, promotedHeadingByIndex)
 		task.SemanticFingerprint = build.TaskSemanticFingerprint(task)
 		semanticTasks = append(semanticTasks, task)
 	}
@@ -168,16 +188,130 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 	}, nil
 }
 
-func isTaskCandidateNode(node Node) bool {
+func isTaskCandidateNode(idx int, node Node, attached []AttachedNodeMetadata, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) bool {
 	if strings.TrimSpace(node.Text) == "" {
 		return false
 	}
 	switch node.Kind {
-	case NodeKindCheckbox, NodeKindHeading:
+	case NodeKindHeading:
 		return true
+	case NodeKindCheckbox:
+		return !isStepCheckbox(idx, attached, parentByIndex, promotedHeadingByIndex)
 	default:
 		return false
 	}
+}
+
+func isPromotedHeadingTask(node Node, known map[string][]MetadataEntry) bool {
+	if node.Kind != NodeKindHeading {
+		return false
+	}
+	for _, key := range []string{"id", "horizon", "deps", "accept"} {
+		if hasKnownMetadataValue(known[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasKnownMetadataValue(entries []MetadataEntry) bool {
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.Value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func structuralParentIndexes(nodes []Node) []int {
+	parentByIndex := make([]int, len(nodes))
+	for childIdx, child := range nodes {
+		bestIdx := -1
+		bestSpan := 0
+		for parentIdx := 0; parentIdx < childIdx; parentIdx++ {
+			parent := nodes[parentIdx]
+			if !nodeOwnsNode(parent, child) {
+				continue
+			}
+			span := parent.EndLine - parent.StartLine
+			if bestIdx == -1 || span < bestSpan || (span == bestSpan && parent.Line > nodes[bestIdx].Line) {
+				bestIdx = parentIdx
+				bestSpan = span
+			}
+		}
+		parentByIndex[childIdx] = bestIdx
+	}
+	return parentByIndex
+}
+
+func nodeOwnsNode(parent Node, child Node) bool {
+	if child.Line <= parent.Line || child.Line > parent.EndLine {
+		return false
+	}
+	switch parent.Kind {
+	case NodeKindHeading:
+		return true
+	case NodeKindCheckbox:
+		return child.Indent > parent.Indent
+	default:
+		return false
+	}
+}
+
+func isStepCheckbox(idx int, attached []AttachedNodeMetadata, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) bool {
+	if idx < 0 || idx >= len(parentByIndex) {
+		return false
+	}
+	parentIdx := parentByIndex[idx]
+	if parentIdx < 0 {
+		return false
+	}
+	if attached[parentIdx].Node.Kind == NodeKindCheckbox {
+		return true
+	}
+	if _, ok := promotedHeadingByIndex[parentIdx]; ok {
+		return true
+	}
+	return false
+}
+
+func descendantSteps(taskIdx int, attached []AttachedNodeMetadata, compiled []CompiledNode, nodeRefs []string, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) []ir.TaskStep {
+	steps := make([]ir.TaskStep, 0)
+	for idx, parentIdx := range parentByIndex {
+		if parentIdx != taskIdx {
+			continue
+		}
+		if attached[idx].Node.Kind != NodeKindCheckbox {
+			continue
+		}
+		if _, promoted := promotedHeadingByIndex[idx]; promoted {
+			continue
+		}
+		steps = append(steps, ir.TaskStep{
+			NodeRef:   nodeRefs[idx],
+			Title:     attached[idx].Node.Text,
+			Checked:   attached[idx].Node.Checked,
+			SliceHash: compiled[idx].Slice.Hash,
+		})
+	}
+	return steps
+}
+
+func descendantEvidenceNodeRefs(taskIdx int, attached []AttachedNodeMetadata, nodeRefs []string, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) []string {
+	refs := make([]string, 0)
+	for idx, parentIdx := range parentByIndex {
+		if parentIdx != taskIdx {
+			continue
+		}
+		if attached[idx].Node.Kind == NodeKindCheckbox {
+			continue
+		}
+		if _, promoted := promotedHeadingByIndex[idx]; promoted {
+			continue
+		}
+		refs = append(refs, nodeRefs[idx])
+	}
+	return refs
 }
 
 func extractNodes(compiled []CompiledNode) []Node {

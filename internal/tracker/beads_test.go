@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,15 +19,22 @@ func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
 	task := TaskProjection{
 		ID:              "fixture.task.now",
 		Title:           "Implement deterministic output",
+		Horizon:         "now",
 		Anchor:          "testdata/plans/mixed.md#L12",
 		SourcePath:      "testdata/plans/mixed.md",
 		SourceStartLine: 12,
 		SourceEndLine:   14,
 		SourceHash:      strings.Repeat("a", 64),
+		Deps:            []string{"dep.schema", "dep.runtime"},
 		Accept: []string{
 			"cmd:go test ./... -run TestCompile",
 			"file:.planmark/tmp/plan.json exists",
 		},
+		Steps: []TaskProjectionStep{
+			{NodeRef: "node.step.1", Title: "Write migration"},
+			{NodeRef: "node.step.2", Title: "Verify rollback", Checked: true},
+		},
+		EvidenceNodeRefs: []string{"node.evidence.1", "node.evidence.2"},
 	}
 
 	payload, err := BuildProjectionPayload(task)
@@ -34,8 +42,8 @@ func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
 		t.Fatalf("build projection payload: %v", err)
 	}
 
-	if payload.ProjectionSchemaVersion != ProjectionSchemaVersionV01 {
-		t.Fatalf("expected projection schema version %q, got %q", ProjectionSchemaVersionV01, payload.ProjectionSchemaVersion)
+	if payload.ProjectionSchemaVersion != ProjectionSchemaVersionV02 {
+		t.Fatalf("expected projection schema version %q, got %q", ProjectionSchemaVersionV02, payload.ProjectionSchemaVersion)
 	}
 	if payload.ID != task.ID {
 		t.Fatalf("expected id %q, got %q", task.ID, payload.ID)
@@ -52,11 +60,26 @@ func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
 	if payload.SourceHash != task.SourceHash {
 		t.Fatalf("expected source hash %q, got %q", task.SourceHash, payload.SourceHash)
 	}
+	if payload.Horizon != task.Horizon {
+		t.Fatalf("expected horizon %q, got %q", task.Horizon, payload.Horizon)
+	}
+	if !reflect.DeepEqual(payload.Dependencies, task.Deps) {
+		t.Fatalf("expected dependencies %#v, got %#v", task.Deps, payload.Dependencies)
+	}
 	if payload.AcceptanceDigest == "" {
 		t.Fatalf("expected non-empty acceptance digest")
 	}
 	if len(payload.AcceptanceDigest) != 64 {
 		t.Fatalf("expected sha256 hex digest length 64, got %d", len(payload.AcceptanceDigest))
+	}
+	if len(payload.Steps) != 2 {
+		t.Fatalf("expected two projected steps, got %#v", payload.Steps)
+	}
+	if payload.Steps[1].Title != "Verify rollback" || !payload.Steps[1].Checked {
+		t.Fatalf("expected ordered step projection, got %#v", payload.Steps)
+	}
+	if !reflect.DeepEqual(payload.EvidenceNodeRefs, task.EvidenceNodeRefs) {
+		t.Fatalf("expected evidence refs %#v, got %#v", task.EvidenceNodeRefs, payload.EvidenceNodeRefs)
 	}
 }
 
@@ -77,6 +100,49 @@ func TestBeadsProjectionPayloadRespectsProjectionVersion(t *testing.T) {
 	}
 	if payload.ProjectionSchemaVersion != "v0.2" {
 		t.Fatalf("expected projection schema version v0.2, got %q", payload.ProjectionSchemaVersion)
+	}
+}
+
+func TestBeadsProjectionPayloadPreservesOrderedRicherFields(t *testing.T) {
+	first := TaskProjection{
+		ID:              "fixture.task.ordered",
+		Title:           "Ordered payload",
+		SourcePath:      "testdata/plans/mixed.md",
+		SourceStartLine: 8,
+		SourceEndLine:   12,
+		SourceHash:      strings.Repeat("d", 64),
+		Deps:            []string{"dep.a", "dep.b"},
+		Steps: []TaskProjectionStep{
+			{NodeRef: "node.step.1", Title: "first"},
+			{NodeRef: "node.step.2", Title: "second"},
+		},
+		EvidenceNodeRefs: []string{"node.evidence.1", "node.evidence.2"},
+	}
+	second := first
+	second.Steps = []TaskProjectionStep{
+		{NodeRef: "node.step.2", Title: "second"},
+		{NodeRef: "node.step.1", Title: "first"},
+	}
+	second.EvidenceNodeRefs = []string{"node.evidence.2", "node.evidence.1"}
+
+	firstPayload, err := BuildProjectionPayload(first)
+	if err != nil {
+		t.Fatalf("build first payload: %v", err)
+	}
+	secondPayload, err := BuildProjectionPayload(second)
+	if err != nil {
+		t.Fatalf("build second payload: %v", err)
+	}
+	firstHash, err := projectionHash(firstPayload)
+	if err != nil {
+		t.Fatalf("hash first payload: %v", err)
+	}
+	secondHash, err := projectionHash(secondPayload)
+	if err != nil {
+		t.Fatalf("hash second payload: %v", err)
+	}
+	if firstHash == secondHash {
+		t.Fatalf("expected ordered richer fields to change projection hash")
 	}
 }
 
@@ -358,14 +424,21 @@ func TestBeadsGoldenProjection(t *testing.T) {
 	task := TaskProjection{
 		ID:              "fixture.task.golden_projection",
 		Title:           "Golden projection payload",
+		Horizon:         "now",
 		SourcePath:      "testdata/plans/mixed.md",
 		SourceStartLine: 21,
 		SourceEndLine:   24,
 		SourceHash:      strings.Repeat("9", 64),
+		Deps:            []string{"dep.schema", "dep.runtime"},
 		Accept: []string{
 			"cmd:go test ./... -run TestCompile",
 			"cmd:go test ./... -run TestSync",
 		},
+		Steps: []TaskProjectionStep{
+			{NodeRef: "node.step.1", Title: "Write migration"},
+			{NodeRef: "node.step.2", Title: "Verify rollback", Checked: true},
+		},
+		EvidenceNodeRefs: []string{"node.evidence.1"},
 	}
 	payload, err := BuildProjectionPayload(task)
 	if err != nil {

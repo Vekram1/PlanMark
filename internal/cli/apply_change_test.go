@@ -190,7 +190,7 @@ func TestApplyChangeRejectsPreconditionHashMismatch(t *testing.T) {
 					SourceHash: strings.Repeat("f", 64),
 					SourceRange: planDeltaLineRange{
 						StartLine: 1,
-						EndLine:   1,
+						EndLine:   2,
 					},
 				},
 				Payload: planDeltaPayload{

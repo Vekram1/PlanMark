@@ -6,33 +6,33 @@
   "source": {
     "nodes": [
       {
-        "node_ref": "testdata/plans/mixed.md|heading|fec3a9f505f8182fc3331f94e3d856a1af5cca8a6e5838de5dbd54589cb62a08#1",
+        "node_ref": "testdata/plans/mixed.md|heading|cc8289f4a16c4745241a61b7203f39ee1f85be8a4a2a5867569f1c32a12894b4#1",
         "kind": "heading",
         "line": 1,
         "start_line": 1,
-        "end_line": 1,
-        "slice_hash": "fec3a9f505f8182fc3331f94e3d856a1af5cca8a6e5838de5dbd54589cb62a08",
-        "slice_text": "# Mixed Fixture",
+        "end_line": 22,
+        "slice_hash": "cc8289f4a16c4745241a61b7203f39ee1f85be8a4a2a5867569f1c32a12894b4",
+        "slice_text": "# Mixed Fixture\n\n## Source Notes\n\nThis fixture blends prose, an ASCII table, and code fences.\n\n| Component | Owner | Status |\n|-----------|-------|--------|\n| compile   | core  | now    |\n| doctor    | core  | next   |\n\n```go\npackage fixture\n\nfunc Stable() string { return \"deterministic\" }\n```\n\n- [ ] Build IR from mixed content\n  @id fixture.mixed.ir\n  @horizon now\n  @accept text:verbatim slices preserve table and code fence\n  @touches internal/compile/compiler.go",
         "text": "Mixed Fixture"
       },
       {
-        "node_ref": "testdata/plans/mixed.md|heading|1f0b17ee2cd5aefe02a8fc088db3934ce50b41ac6b7142890898a02bf735ce7d#1",
+        "node_ref": "testdata/plans/mixed.md|heading|a2fbf5768b9c89b4e478c6df2c86c1881a6f122e4b7d3c89a21ced57363c88c0#1",
         "kind": "heading",
         "line": 3,
         "start_line": 3,
-        "end_line": 3,
-        "slice_hash": "1f0b17ee2cd5aefe02a8fc088db3934ce50b41ac6b7142890898a02bf735ce7d",
-        "slice_text": "## Source Notes",
+        "end_line": 22,
+        "slice_hash": "a2fbf5768b9c89b4e478c6df2c86c1881a6f122e4b7d3c89a21ced57363c88c0",
+        "slice_text": "## Source Notes\n\nThis fixture blends prose, an ASCII table, and code fences.\n\n| Component | Owner | Status |\n|-----------|-------|--------|\n| compile   | core  | now    |\n| doctor    | core  | next   |\n\n```go\npackage fixture\n\nfunc Stable() string { return \"deterministic\" }\n```\n\n- [ ] Build IR from mixed content\n  @id fixture.mixed.ir\n  @horizon now\n  @accept text:verbatim slices preserve table and code fence\n  @touches internal/compile/compiler.go",
         "text": "Source Notes"
       },
       {
-        "node_ref": "testdata/plans/mixed.md|checkbox|9aa830d2fd78d27aae8ad9b679135f438cde87bcda9eb23846bf6abcd5f664be#1",
+        "node_ref": "testdata/plans/mixed.md|checkbox|04cadf227ee31c6de80024eb2e69b085ffca55b0fa993995fd06506b4045dda1#1",
         "kind": "checkbox",
         "line": 18,
         "start_line": 18,
-        "end_line": 18,
-        "slice_hash": "9aa830d2fd78d27aae8ad9b679135f438cde87bcda9eb23846bf6abcd5f664be",
-        "slice_text": "- [ ] Build IR from mixed content",
+        "end_line": 22,
+        "slice_hash": "04cadf227ee31c6de80024eb2e69b085ffca55b0fa993995fd06506b4045dda1",
+        "slice_text": "- [ ] Build IR from mixed content\n  @id fixture.mixed.ir\n  @horizon now\n  @accept text:verbatim slices preserve table and code fence\n  @touches internal/compile/compiler.go",
         "text": "Build IR from mixed content"
       }
     ]
@@ -41,7 +41,7 @@
     "tasks": [
       {
         "id": "fixture.mixed.ir",
-        "node_ref": "testdata/plans/mixed.md|checkbox|9aa830d2fd78d27aae8ad9b679135f438cde87bcda9eb23846bf6abcd5f664be#1",
+        "node_ref": "testdata/plans/mixed.md|checkbox|04cadf227ee31c6de80024eb2e69b085ffca55b0fa993995fd06506b4045dda1#1",
         "title": "Build IR from mixed content",
         "horizon": "now",
         "accept": [
@@ -52,29 +52,29 @@
     ],
     "task_candidates": [
       {
-        "node_ref": "testdata/plans/mixed.md|heading|fec3a9f505f8182fc3331f94e3d856a1af5cca8a6e5838de5dbd54589cb62a08#1",
+        "node_ref": "testdata/plans/mixed.md|heading|cc8289f4a16c4745241a61b7203f39ee1f85be8a4a2a5867569f1c32a12894b4#1",
         "path": "testdata/plans/mixed.md",
         "start_line": 1,
-        "end_line": 1,
-        "slice_hash": "fec3a9f505f8182fc3331f94e3d856a1af5cca8a6e5838de5dbd54589cb62a08",
+        "end_line": 22,
+        "slice_hash": "cc8289f4a16c4745241a61b7203f39ee1f85be8a4a2a5867569f1c32a12894b4",
         "kind": "heading",
         "title": "Mixed Fixture"
       },
       {
-        "node_ref": "testdata/plans/mixed.md|heading|1f0b17ee2cd5aefe02a8fc088db3934ce50b41ac6b7142890898a02bf735ce7d#1",
+        "node_ref": "testdata/plans/mixed.md|heading|a2fbf5768b9c89b4e478c6df2c86c1881a6f122e4b7d3c89a21ced57363c88c0#1",
         "path": "testdata/plans/mixed.md",
         "start_line": 3,
-        "end_line": 3,
-        "slice_hash": "1f0b17ee2cd5aefe02a8fc088db3934ce50b41ac6b7142890898a02bf735ce7d",
+        "end_line": 22,
+        "slice_hash": "a2fbf5768b9c89b4e478c6df2c86c1881a6f122e4b7d3c89a21ced57363c88c0",
         "kind": "heading",
         "title": "Source Notes"
       },
       {
-        "node_ref": "testdata/plans/mixed.md|checkbox|9aa830d2fd78d27aae8ad9b679135f438cde87bcda9eb23846bf6abcd5f664be#1",
+        "node_ref": "testdata/plans/mixed.md|checkbox|04cadf227ee31c6de80024eb2e69b085ffca55b0fa993995fd06506b4045dda1#1",
         "path": "testdata/plans/mixed.md",
         "start_line": 18,
-        "end_line": 18,
-        "slice_hash": "9aa830d2fd78d27aae8ad9b679135f438cde87bcda9eb23846bf6abcd5f664be",
+        "end_line": 22,
+        "slice_hash": "04cadf227ee31c6de80024eb2e69b085ffca55b0fa993995fd06506b4045dda1",
         "kind": "checkbox",
         "title": "Build IR from mixed content"
       }

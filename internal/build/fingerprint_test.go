@@ -13,6 +13,11 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 		Horizon: "now",
 		Deps:    []string{"dep.b", "dep.a"},
 		Accept:  []string{"cmd:go test ./...", "text:output includes fingerprint"},
+		Steps: []ir.TaskStep{
+			{NodeRef: "step.a", Title: "write code", SliceHash: "hash.a"},
+			{NodeRef: "step.b", Title: "run tests", Checked: true, SliceHash: "hash.b"},
+		},
+		EvidenceNodeRefs: []string{"node.b", "node.a"},
 	}
 	reordered := ir.Task{
 		ID:      " fixture.task ",
@@ -20,18 +25,39 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 		Horizon: "NOW",
 		Deps:    []string{"dep.a", "dep.b"},
 		Accept:  []string{"text:output includes fingerprint", "cmd:go test ./..."},
+		Steps: []ir.TaskStep{
+			{NodeRef: "step.b", Title: "run tests", Checked: true, SliceHash: "hash.b"},
+			{NodeRef: "step.a", Title: "write code", SliceHash: "hash.a"},
+		},
+		EvidenceNodeRefs: []string{"node.a", "node.b"},
 	}
 
 	fpA := TaskSemanticFingerprint(base)
 	fpB := TaskSemanticFingerprint(reordered)
-	if fpA != fpB {
-		t.Fatalf("expected deterministic fingerprint for equivalent semantics, got %q vs %q", fpA, fpB)
+	if fpA == fpB {
+		t.Fatalf("expected fingerprint change when ordered step/evidence semantics change")
 	}
 
 	changed := reordered
-	changed.Accept = append(changed.Accept, "cmd:go test ./... -run TestExtra")
+	changed.Steps = append(changed.Steps, ir.TaskStep{Title: "review output"})
 	fpC := TaskSemanticFingerprint(changed)
-	if fpA == fpC {
-		t.Fatalf("expected fingerprint change when semantic accept criteria changes")
+	if fpB == fpC {
+		t.Fatalf("expected fingerprint change when semantic steps change")
+	}
+
+	checkedChanged := base
+	checkedChanged.Steps = append([]ir.TaskStep(nil), base.Steps...)
+	checkedChanged.Steps[1].Checked = false
+	fpD := TaskSemanticFingerprint(checkedChanged)
+	if fpA == fpD {
+		t.Fatalf("expected fingerprint change when step checked state changes")
+	}
+
+	provenanceChanged := base
+	provenanceChanged.Steps = append([]ir.TaskStep(nil), base.Steps...)
+	provenanceChanged.Steps[0].SliceHash = "hash.changed"
+	fpE := TaskSemanticFingerprint(provenanceChanged)
+	if fpA == fpE {
+		t.Fatalf("expected fingerprint change when step provenance changes")
 	}
 }

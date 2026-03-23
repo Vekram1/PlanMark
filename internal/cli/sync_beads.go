@@ -195,15 +195,28 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 		projection := tracker.TaskProjection{
-			ID:              task.ID,
-			Title:           task.Title,
-			SourcePath:      compiled.PlanPath,
-			SourceStartLine: node.startLine,
-			SourceEndLine:   node.endLine,
-			SourceHash:      node.sliceHash,
-			NodeRef:         task.NodeRef,
-			CompileID:       compileID,
-			Accept:          append([]string(nil), task.Accept...),
+			ID:               task.ID,
+			Title:            task.Title,
+			Horizon:          task.Horizon,
+			SourcePath:       compiled.PlanPath,
+			SourceStartLine:  node.startLine,
+			SourceEndLine:    node.endLine,
+			SourceHash:       node.sliceHash,
+			NodeRef:          task.NodeRef,
+			CompileID:        compileID,
+			Deps:             append([]string(nil), task.Deps...),
+			Accept:           append([]string(nil), task.Accept...),
+			EvidenceNodeRefs: append([]string(nil), task.EvidenceNodeRefs...),
+		}
+		if len(task.Steps) > 0 {
+			projection.Steps = make([]tracker.TaskProjectionStep, 0, len(task.Steps))
+			for _, step := range task.Steps {
+				projection.Steps = append(projection.Steps, tracker.TaskProjectionStep{
+					NodeRef: step.NodeRef,
+					Title:   step.Title,
+					Checked: step.Checked,
+				})
+			}
 		}
 		hash, err := syncplanner.ProjectionHashForTask(projection)
 		if err != nil {

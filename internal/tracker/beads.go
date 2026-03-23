@@ -15,7 +15,7 @@ import (
 	"github.com/vikramoddiraju/planmark/internal/fsio"
 )
 
-const ProjectionSchemaVersionV01 = "v0.1"
+const ProjectionSchemaVersionV02 = "v0.2"
 const BeadsManifestSchemaVersionV01 = "v0.1"
 
 var ErrTransientSync = errors.New("transient tracker sync error")
@@ -31,10 +31,20 @@ type BeadsProjectionPayload struct {
 	ProjectionSchemaVersion string      `json:"projection_schema_version"`
 	ID                      string      `json:"id"`
 	Title                   string      `json:"title"`
+	Horizon                 string      `json:"horizon,omitempty"`
 	Anchor                  string      `json:"anchor"`
 	SourceRange             SourceRange `json:"source_range"`
 	SourceHash              string      `json:"source_hash"`
+	Dependencies            []string    `json:"dependencies,omitempty"`
 	AcceptanceDigest        string      `json:"acceptance_digest"`
+	Steps                   []BeadsStep `json:"steps,omitempty"`
+	EvidenceNodeRefs        []string    `json:"evidence_node_refs,omitempty"`
+}
+
+type BeadsStep struct {
+	Title   string `json:"title"`
+	Checked bool   `json:"checked,omitempty"`
+	NodeRef string `json:"node_ref,omitempty"`
 }
 
 type BeadsAdapter struct {
@@ -77,6 +87,23 @@ func NewBeadsAdapter() *BeadsAdapter {
 	}
 }
 
+func (a *BeadsAdapter) Capabilities() TrackerCapabilities {
+	return TrackerCapabilities{
+		AdapterName:  "beads",
+		Title:        true,
+		Body:         TextMarkdown,
+		Steps:        CapabilityRendered,
+		ChildWork:    CapabilityUnsupported,
+		CustomFields: CapabilityUnsupported,
+		RuntimeOverlays: RuntimeOverlayCapabilities{
+			Status:   true,
+			Assignee: true,
+			Priority: true,
+		},
+		ProjectionSchema: ProjectionSchemaVersionV02,
+	}
+}
+
 func (a *BeadsAdapter) SeedFromSyncManifest(manifest BeadsSyncManifest) {
 	for _, entry := range manifest.Entries {
 		id := strings.TrimSpace(entry.ID)
@@ -102,37 +129,41 @@ func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error)
 	if strings.TrimSpace(task.ID) == "" {
 		return BeadsProjectionPayload{}, fmt.Errorf("task projection requires non-empty id")
 	}
-	if strings.TrimSpace(task.SourcePath) == "" {
+	if strings.TrimSpace(task.Provenance.Path) == "" {
 		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q requires source path", task.ID)
 	}
-	if task.SourceStartLine <= 0 || task.SourceEndLine < task.SourceStartLine {
-		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q has invalid source range %d-%d", task.ID, task.SourceStartLine, task.SourceEndLine)
+	if task.Provenance.StartLine <= 0 || task.Provenance.EndLine < task.Provenance.StartLine {
+		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q has invalid source range %d-%d", task.ID, task.Provenance.StartLine, task.Provenance.EndLine)
 	}
-	if strings.TrimSpace(task.SourceHash) == "" {
+	if strings.TrimSpace(task.Provenance.SourceHash) == "" {
 		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q requires source hash", task.ID)
 	}
 
 	anchor := strings.TrimSpace(task.Anchor)
 	if anchor == "" {
-		anchor = fmt.Sprintf("%s#L%d", task.SourcePath, task.SourceStartLine)
+		anchor = fmt.Sprintf("%s#L%d", task.Provenance.Path, task.Provenance.StartLine)
 	}
 	projectionVersion := strings.TrimSpace(task.ProjectionVersion)
 	if projectionVersion == "" {
-		projectionVersion = ProjectionSchemaVersionV01
+		projectionVersion = ProjectionSchemaVersionV02
 	}
 
 	return BeadsProjectionPayload{
 		ProjectionSchemaVersion: projectionVersion,
 		ID:                      task.ID,
 		Title:                   task.Title,
+		Horizon:                 strings.TrimSpace(task.Horizon),
 		Anchor:                  anchor,
 		SourceRange: SourceRange{
-			Path:      task.SourcePath,
-			StartLine: task.SourceStartLine,
-			EndLine:   task.SourceEndLine,
+			Path:      task.Provenance.Path,
+			StartLine: task.Provenance.StartLine,
+			EndLine:   task.Provenance.EndLine,
 		},
-		SourceHash:       task.SourceHash,
-		AcceptanceDigest: acceptanceDigest(task.Accept),
+		SourceHash:       task.Provenance.SourceHash,
+		Dependencies:     orderedStrings(task.Dependencies),
+		AcceptanceDigest: acceptanceDigest(task.Acceptance),
+		Steps:            buildBeadsSteps(task.Steps),
+		EvidenceNodeRefs: orderedEvidenceRefs(task.Evidence),
 	}, nil
 }
 
@@ -155,9 +186,9 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 	if err != nil {
 		return PushResult{}, err
 	}
-	currentHash, err := projectionHash(payload)
+	currentHash, err := TaskProjectionHash(task)
 	if err != nil {
-		return PushResult{}, err
+		return PushResult{}, fmt.Errorf("hash task projection: %w", err)
 	}
 
 	previousHash, hasPrevious := a.projectionHashByID[task.ID]
@@ -176,14 +207,7 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 	}
 	a.projectionHashByID[task.ID] = currentHash
 	a.sourceHashByID[task.ID] = payload.SourceHash
-	a.provenanceByID[task.ID] = TaskProvenance{
-		NodeRef:    strings.TrimSpace(task.NodeRef),
-		Path:       task.SourcePath,
-		StartLine:  task.SourceStartLine,
-		EndLine:    task.SourceEndLine,
-		SourceHash: task.SourceHash,
-		CompileID:  strings.TrimSpace(task.CompileID),
-	}
+	a.provenanceByID[task.ID] = normalizedProvenance(task.Provenance)
 	a.remoteIDByID[task.ID] = remoteID
 
 	diagnostic := "projection updated"
@@ -203,7 +227,7 @@ func (a *BeadsAdapter) DetectProjectionDrift(task TaskProjection) (bool, error) 
 	if strings.TrimSpace(task.ID) == "" {
 		return false, fmt.Errorf("task projection requires non-empty id")
 	}
-	if strings.TrimSpace(task.SourceHash) == "" {
+	if strings.TrimSpace(task.Provenance.SourceHash) == "" {
 		return false, fmt.Errorf("task projection %q requires source hash", task.ID)
 	}
 
@@ -211,7 +235,7 @@ func (a *BeadsAdapter) DetectProjectionDrift(task TaskProjection) (bool, error) 
 	if !hasPrevious {
 		return false, nil
 	}
-	return previousSourceHash != task.SourceHash, nil
+	return previousSourceHash != strings.TrimSpace(task.Provenance.SourceHash), nil
 }
 
 func (a *BeadsAdapter) PullRuntimeFields(_ context.Context, ids []string) (map[string]RuntimeFields, error) {
@@ -356,6 +380,57 @@ func projectionHash(payload BeadsProjectionPayload) (string, error) {
 	}
 	sum := sha256.Sum256(blob)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func buildBeadsSteps(steps []TaskProjectionStep) []BeadsStep {
+	projected := make([]BeadsStep, 0, len(steps))
+	for _, step := range steps {
+		title := strings.TrimSpace(step.Title)
+		if title == "" {
+			continue
+		}
+		projected = append(projected, BeadsStep{
+			Title:   title,
+			Checked: step.Checked,
+			NodeRef: strings.TrimSpace(step.NodeRef),
+		})
+	}
+	return projected
+}
+
+func orderedStrings(values []string) []string {
+	ordered := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		ordered = append(ordered, trimmed)
+	}
+	return ordered
+}
+
+func orderedEvidenceRefs(evidence []TaskProjectionEvidence) []string {
+	ordered := make([]string, 0, len(evidence))
+	for _, item := range evidence {
+		ref := strings.TrimSpace(item.NodeRef)
+		if ref == "" {
+			continue
+		}
+		ordered = append(ordered, ref)
+	}
+	return ordered
+}
+
+func normalizedProvenance(p TaskProvenance) TaskProvenance {
+	return TaskProvenance{
+		NodeRef:    strings.TrimSpace(p.NodeRef),
+		Path:       strings.TrimSpace(p.Path),
+		StartLine:  p.StartLine,
+		EndLine:    p.EndLine,
+		SourceHash: strings.TrimSpace(p.SourceHash),
+		CompileID:  strings.TrimSpace(p.CompileID),
+	}
 }
 
 func runtimeHash(fields RuntimeFields) (string, error) {

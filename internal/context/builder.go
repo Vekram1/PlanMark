@@ -20,18 +20,38 @@ var (
 )
 
 type L0Packet struct {
-	Level      string   `json:"level"`
-	TaskID     string   `json:"task_id"`
-	NodeRef    string   `json:"node_ref"`
-	Title      string   `json:"title"`
-	Horizon    string   `json:"horizon,omitempty"`
-	Deps       []string `json:"deps,omitempty"`
-	Accept     []string `json:"accept,omitempty"`
-	SourcePath string   `json:"source_path"`
-	StartLine  int      `json:"start_line"`
-	EndLine    int      `json:"end_line"`
-	SliceHash  string   `json:"slice_hash"`
-	SliceText  string   `json:"slice_text"`
+	Level      string            `json:"level"`
+	TaskID     string            `json:"task_id"`
+	NodeRef    string            `json:"node_ref"`
+	Title      string            `json:"title"`
+	Horizon    string            `json:"horizon,omitempty"`
+	Deps       []string          `json:"deps,omitempty"`
+	Accept     []string          `json:"accept,omitempty"`
+	Steps      []TaskStepContext `json:"steps,omitempty"`
+	Evidence   []EvidenceSlice   `json:"evidence,omitempty"`
+	SourcePath string            `json:"source_path"`
+	StartLine  int               `json:"start_line"`
+	EndLine    int               `json:"end_line"`
+	SliceHash  string            `json:"slice_hash"`
+	SliceText  string            `json:"slice_text"`
+}
+
+type TaskStepContext struct {
+	NodeRef   string `json:"node_ref"`
+	Title     string `json:"title"`
+	Checked   bool   `json:"checked,omitempty"`
+	SliceHash string `json:"slice_hash,omitempty"`
+}
+
+type EvidenceSlice struct {
+	NodeRef    string `json:"node_ref"`
+	Kind       string `json:"kind"`
+	Title      string `json:"title,omitempty"`
+	SourcePath string `json:"source_path"`
+	StartLine  int    `json:"start_line"`
+	EndLine    int    `json:"end_line"`
+	SliceHash  string `json:"slice_hash"`
+	SliceText  string `json:"slice_text"`
 }
 
 type PinExtract struct {
@@ -407,6 +427,39 @@ func resolveTaskAndNode(plan ir.PlanIR, taskID string) (ir.Task, ir.SourceNode, 
 }
 
 func buildL0Packet(plan ir.PlanIR, task ir.Task, node ir.SourceNode) L0Packet {
+	nodeByRef := make(map[string]ir.SourceNode, len(plan.Source.Nodes))
+	for _, candidate := range plan.Source.Nodes {
+		nodeByRef[candidate.NodeRef] = candidate
+	}
+
+	steps := make([]TaskStepContext, 0, len(task.Steps))
+	for _, step := range task.Steps {
+		steps = append(steps, TaskStepContext{
+			NodeRef:   step.NodeRef,
+			Title:     step.Title,
+			Checked:   step.Checked,
+			SliceHash: step.SliceHash,
+		})
+	}
+
+	evidence := make([]EvidenceSlice, 0, len(task.EvidenceNodeRefs))
+	for _, nodeRef := range task.EvidenceNodeRefs {
+		evidenceNode, ok := nodeByRef[nodeRef]
+		if !ok {
+			continue
+		}
+		evidence = append(evidence, EvidenceSlice{
+			NodeRef:    evidenceNode.NodeRef,
+			Kind:       evidenceNode.Kind,
+			Title:      evidenceNode.Text,
+			SourcePath: plan.PlanPath,
+			StartLine:  evidenceNode.StartLine,
+			EndLine:    evidenceNode.EndLine,
+			SliceHash:  evidenceNode.SliceHash,
+			SliceText:  evidenceNode.SliceText,
+		})
+	}
+
 	return L0Packet{
 		Level:      "L0",
 		TaskID:     task.ID,
@@ -415,6 +468,8 @@ func buildL0Packet(plan ir.PlanIR, task ir.Task, node ir.SourceNode) L0Packet {
 		Horizon:    task.Horizon,
 		Deps:       append([]string(nil), task.Deps...),
 		Accept:     append([]string(nil), task.Accept...),
+		Steps:      steps,
+		Evidence:   evidence,
 		SourcePath: plan.PlanPath,
 		StartLine:  node.StartLine,
 		EndLine:    node.EndLine,

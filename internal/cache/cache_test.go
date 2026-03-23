@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vikramoddiraju/planmark/internal/build"
 	"github.com/vikramoddiraju/planmark/internal/compile"
 	"github.com/vikramoddiraju/planmark/internal/ir"
 )
@@ -93,6 +94,46 @@ func TestContextPacketKeyDeterministicForEquivalentInput(t *testing.T) {
 	keyC := ContextPacketKey(input)
 	if keyA != keyC {
 		t.Fatalf("expected pin hash order to be canonicalized")
+	}
+}
+
+func TestContextPacketKeyChangesWhenStepStateChanges(t *testing.T) {
+	baseTask := ir.Task{
+		ID:                  "fixture.task",
+		NodeRef:             "node.root",
+		SemanticFingerprint: build.TaskSemanticFingerprint(ir.Task{ID: "fixture.task", Steps: []ir.TaskStep{{NodeRef: "step.a", Title: "write code", Checked: false, SliceHash: "hash.a"}}}),
+	}
+	changedTask := ir.Task{
+		ID:                  "fixture.task",
+		NodeRef:             "node.root",
+		SemanticFingerprint: build.TaskSemanticFingerprint(ir.Task{ID: "fixture.task", Steps: []ir.TaskStep{{NodeRef: "step.a", Title: "write code", Checked: true, SliceHash: "hash.a"}}}),
+	}
+
+	keyA := ContextPacketKey(ContextKeyInput{
+		Level:                           "L0",
+		PlanPath:                        "PLAN.md",
+		IRVersion:                       "v0.2",
+		DeterminismPolicyVersion:        "v0.1",
+		SemanticDerivationPolicyVersion: "v0.1",
+		TaskID:                          baseTask.ID,
+		TaskNodeRef:                     baseTask.NodeRef,
+		TaskSemanticFingerprint:         baseTask.SemanticFingerprint,
+		NodeSliceHash:                   "root.hash",
+	})
+	keyB := ContextPacketKey(ContextKeyInput{
+		Level:                           "L0",
+		PlanPath:                        "PLAN.md",
+		IRVersion:                       "v0.2",
+		DeterminismPolicyVersion:        "v0.1",
+		SemanticDerivationPolicyVersion: "v0.1",
+		TaskID:                          changedTask.ID,
+		TaskNodeRef:                     changedTask.NodeRef,
+		TaskSemanticFingerprint:         changedTask.SemanticFingerprint,
+		NodeSliceHash:                   "root.hash",
+	})
+
+	if keyA == keyB {
+		t.Fatalf("expected cache key change when step checked state changes")
 	}
 }
 

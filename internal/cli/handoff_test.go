@@ -15,10 +15,14 @@ func TestHandoffPacketDeterministic(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	planBody := strings.Join([]string{
-		"- [ ] Root task",
-		"  @id fixture.task.root",
-		"  @horizon now",
-		"  @deps fixture.task.dep",
+		"## Root task",
+		"@id fixture.task.root",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"@deps fixture.task.dep",
+		"",
+		"- [ ] Root step",
+		"### Evidence",
 		"",
 		"- [ ] Dep task",
 		"  @id fixture.task.dep",
@@ -54,6 +58,14 @@ func TestHandoffPacketDeterministic(t *testing.T) {
 	data := payload["data"].(map[string]any)
 	if data["plan_path"] != filepath.ToSlash(planPath) {
 		t.Fatalf("expected plan_path %q, got %v", filepath.ToSlash(planPath), data["plan_path"])
+	}
+	steps, ok := data["steps"].([]any)
+	if !ok || len(steps) != 1 {
+		t.Fatalf("expected 1 step in handoff packet, got %v", data["steps"])
+	}
+	evidence, ok := data["evidence"].([]any)
+	if !ok || len(evidence) != 1 {
+		t.Fatalf("expected 1 evidence block in handoff packet, got %v", data["evidence"])
 	}
 	refs, ok := data["global_context_refs"].([]any)
 	if !ok || len(refs) < 2 {

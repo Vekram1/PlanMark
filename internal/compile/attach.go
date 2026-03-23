@@ -66,7 +66,7 @@ func AttachMetadataToNodes(nodes []Node, parsed MetadataParseResult) MetadataAtt
 			result.Unattached = append(result.Unattached, entry)
 			continue
 		}
-		targetNodeIdx := sortedNodeIndexes[nodeScanIdx]
+		targetNodeIdx := attachmentOwnerIndex(nodes, sortedNodeIndexes, nodeScanIdx, entry)
 
 		if _, ok := knownMetadataKeys[entry.Key]; ok {
 			result.Nodes[targetNodeIdx].KnownByKey[entry.Key] = append(result.Nodes[targetNodeIdx].KnownByKey[entry.Key], entry)
@@ -76,4 +76,45 @@ func AttachMetadataToNodes(nodes []Node, parsed MetadataParseResult) MetadataAtt
 	}
 
 	return result
+}
+
+func attachmentOwnerIndex(nodes []Node, sortedNodeIndexes []int, nodeScanIdx int, entry MetadataEntry) int {
+	targetNodeIdx := sortedNodeIndexes[nodeScanIdx]
+	targetNode := nodes[targetNodeIdx]
+	if targetNode.Kind != NodeKindCheckbox {
+		return targetNodeIdx
+	}
+
+	if entry.Indent > targetNode.Indent {
+		return targetNodeIdx
+	}
+
+	if headingIdx, ok := enclosingHeadingIndex(nodes, sortedNodeIndexes, nodeScanIdx, targetNode.Level); ok {
+		return headingIdx
+	}
+
+	return targetNodeIdx
+}
+
+func enclosingHeadingIndex(nodes []Node, sortedNodeIndexes []int, nodeScanIdx int, currentLevel int) (int, bool) {
+	bestIdx := -1
+	bestLevel := 0
+	for i := nodeScanIdx; i >= 0; i-- {
+		idx := sortedNodeIndexes[i]
+		node := nodes[idx]
+		if node.Kind != NodeKindHeading {
+			continue
+		}
+		if currentLevel > 0 && node.Level >= currentLevel {
+			continue
+		}
+		if bestIdx == -1 || node.Level > bestLevel {
+			bestIdx = idx
+			bestLevel = node.Level
+		}
+	}
+	if bestIdx == -1 {
+		return 0, false
+	}
+	return bestIdx, true
 }

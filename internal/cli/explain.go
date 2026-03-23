@@ -129,6 +129,8 @@ func runExplain(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "task_id: %s\n", result.TaskID)
 		fmt.Fprintf(stdout, "title: %s\n", result.Title)
 		fmt.Fprintf(stdout, "horizon: %s\n", result.Horizon)
+		fmt.Fprintf(stdout, "step_count: %d\n", result.StepCount)
+		fmt.Fprintf(stdout, "evidence_refs: %d\n", len(result.EvidenceNodeRefs))
 		fmt.Fprintf(stdout, "status: %s\n", status)
 		if len(result.Blockers) > 0 {
 			fmt.Fprintln(stdout, "blockers:")
@@ -148,6 +150,8 @@ func runExplain(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  task_id: %s\n", result.TaskID)
 		fmt.Fprintf(stdout, "  title: %s\n", result.Title)
 		fmt.Fprintf(stdout, "  horizon: %s\n", result.Horizon)
+		fmt.Fprintf(stdout, "  step_count: %d\n", result.StepCount)
+		fmt.Fprintf(stdout, "  evidence_refs: %d\n", len(result.EvidenceNodeRefs))
 		fmt.Fprintf(stdout, "  status: %s\n", status)
 		fmt.Fprintf(stdout, "  blockers: %d\n", len(result.Blockers))
 		if len(result.Blockers) > 0 {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +14,28 @@ import (
 	"github.com/vikramoddiraju/planmark/internal/journal"
 	"github.com/vikramoddiraju/planmark/internal/tracker"
 )
+
+type captureBeadsAdapter struct {
+	pushed       []tracker.TaskProjection
+	manifestPath string
+}
+
+func (a *captureBeadsAdapter) SeedFromSyncManifest(_ tracker.BeadsSyncManifest) {}
+
+func (a *captureBeadsAdapter) PushTask(_ context.Context, task tracker.TaskProjection) (tracker.PushResult, error) {
+	a.pushed = append(a.pushed, task)
+	return tracker.PushResult{
+		RemoteID: "beads:" + task.ID,
+		Mutated:  true,
+	}, nil
+}
+
+func (a *captureBeadsAdapter) WriteSyncManifest(stateDir string) (string, error) {
+	if a.manifestPath == "" {
+		a.manifestPath = filepath.Join(stateDir, "sync", "beads-manifest.json")
+	}
+	return a.manifestPath, nil
+}
 
 func TestSyncBeadsUsageRequiresTarget(t *testing.T) {
 	var out bytes.Buffer
@@ -49,6 +72,62 @@ func TestSyncBeadsWritesManifest(t *testing.T) {
 	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("expected manifest at %q: %v", manifestPath, err)
+	}
+}
+
+func TestSyncBeadsProjectsRicherSemanticTaskFields(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@deps api.schema, api.runtime",
+		"@accept cmd:go test ./...",
+		"",
+		"- [ ] Write additive migration",
+		"- [x] Verify rollback",
+		"",
+		"### Notes",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	restore := newBeadsSyncAdapter
+	adapter := &captureBeadsAdapter{}
+	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
+	defer func() { newBeadsSyncAdapter = restore }()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if len(adapter.pushed) != 1 {
+		t.Fatalf("expected one pushed task projection, got %#v", adapter.pushed)
+	}
+
+	got := adapter.pushed[0]
+	if got.ID != "api.migrate" || got.Title != "Add migration" {
+		t.Fatalf("unexpected projected identity/title: %#v", got)
+	}
+	if got.Horizon != "now" {
+		t.Fatalf("expected horizon now, got %#v", got)
+	}
+	if !reflect.DeepEqual(got.Deps, []string{"api.schema", "api.runtime"}) {
+		t.Fatalf("unexpected deps: %#v", got.Deps)
+	}
+	if len(got.Steps) != 2 {
+		t.Fatalf("expected two projected steps, got %#v", got.Steps)
+	}
+	if got.Steps[0].Title != "Write additive migration" || got.Steps[1].Title != "Verify rollback" || !got.Steps[1].Checked {
+		t.Fatalf("unexpected projected steps: %#v", got.Steps)
+	}
+	if len(got.EvidenceNodeRefs) != 1 {
+		t.Fatalf("expected one projected evidence node ref, got %#v", got.EvidenceNodeRefs)
 	}
 }
 

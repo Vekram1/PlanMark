@@ -46,8 +46,9 @@ PlanMark authoring supports mixed Markdown content, task-shaped blocks, and line
 
 Implementation note:
 
-- The current parser implementation still recognizes a narrower set of source nodes and uses a simpler metadata attachment rule.
-- This section defines the intended authoring contract for the richer Markdown model, not a claim that every rule below is already implemented in the current binary.
+- The current parser implementation now recognizes scope boundaries for heading sections and checkbox blocks, and metadata attachment is partially scope-aware for those shapes.
+- The current binary also supports a conservative first semantic pass for the richer model: headings with explicit task metadata can be promoted to tasks, and nested checkbox items default to semantic steps rather than standalone tasks.
+- The implementation is still narrower than the full target contract below: it does not yet model a general structural Markdown layer or capture all nested block types as first-class structural entities.
 
 ## Task Shapes And Scope
 
@@ -212,6 +213,10 @@ Notes:
 - Source of tracker reconcile rules: `docs/specs/tracker-reconcile-v0.1.md`
 - Policy identifier: `tracker_reconcile/v0.1`
 - Contract: PLAN remains canonical for structure/intent; tracker runtime fields are merged under explicit safe-pull rules.
+- Tracker rendering now flows through a tracker-neutral task projection layer before adapter-specific payloads are built.
+- Tracker adapters expose deterministic capability descriptors so rendering/template policy can validate backend support for body text, steps, child work, custom fields, and safe runtime overlays.
+- Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
+- Sync planning hashes the full canonical tracker-neutral projection, so reserved fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
 
 ## Semantic Derivation Policy Link
 

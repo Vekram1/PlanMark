@@ -8,9 +8,10 @@ import (
 )
 
 type MetadataEntry struct {
-	Key   string
-	Value string
-	Line  int
+	Key    string
+	Value  string
+	Line   int
+	Indent int
 }
 
 type MetadataParseResult struct {
@@ -66,9 +67,10 @@ func ParseMetadata(content []byte) (MetadataParseResult, error) {
 			return MetadataParseResult{}, fmt.Errorf("invalid metadata key at line %d", idx+1)
 		}
 		entry := MetadataEntry{
-			Key:   key,
-			Value: strings.TrimSpace(m[2]),
-			Line:  idx + 1,
+			Key:    key,
+			Value:  strings.TrimSpace(m[2]),
+			Line:   idx + 1,
+			Indent: leadingIndentWidth(line),
 		}
 		result.All = append(result.All, entry)
 
