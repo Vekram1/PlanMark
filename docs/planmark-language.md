@@ -81,6 +81,7 @@ We need additive rollout before removing legacy reads.
 
 Use a checkbox task when the task is a compact work item.
 Use a heading task when the task needs scoped prose, tables, examples, or nested steps.
+A heading becomes a task only when task metadata or an explicit semantic promotion rule says it does; a bare heading remains structural context.
 
 ### 2.2 Task scope
 
@@ -99,6 +100,7 @@ The minimum viable task remains intentionally cheap:
 - optional `@horizon`
 
 Additional metadata can be added as the task becomes execution-ready.
+For heading tasks, some task metadata is expected so the heading is promoted as a task rather than treated as plain section structure.
 
 ---
 

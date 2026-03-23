@@ -26,7 +26,7 @@ PlanMark defines a deterministic, lossless pipeline from `PLAN.md` into machine-
 PlanMark authoring supports mixed Markdown content, task-shaped blocks, and line-oriented metadata.
 
 - Task-shaped checklist entries: Markdown checkboxes (`- [ ]`, `- [x]`) remain source-visible and preserved.
-- Task-shaped section headings may define task scope when paired with task metadata.
+- Task-shaped section headings may define task scope when paired with task metadata or an explicit semantic promotion rule.
 - Metadata annotations use line-oriented `@key value` forms attached deterministically to a task or section scope.
 - Canonical metadata keys include (initial set):
   - `@id`
@@ -54,7 +54,7 @@ Implementation note:
 The canonical authoring model recognizes two task shapes.
 
 - Checkbox task: a checklist item plus directly owned metadata and child content.
-- Heading task: a heading plus metadata and descendant content within the heading boundary.
+- Heading task: a heading promoted by task metadata or explicit semantic rule, plus descendant content within the heading boundary.
 
 Task scope rules:
 
@@ -98,7 +98,7 @@ This default prevents accidental task explosion while still preserving enough st
 Planning-first authoring keeps PLAN writing cheap while preserving deterministic extraction.
 
 - Only a task shape plus optional `@id`/`@horizon` are required.
-- A task shape may be either a checklist item or a heading with task metadata.
+- A task shape may be either a checklist item or a heading with task metadata or explicit promotion rule.
 - Additional metadata (`@accept`, `@deps`, `@touches`, `@why`, and others) can be added incrementally as scope stabilizes.
 - Free-form prose and evidence blocks may live inside task scope without losing provenance.
 - Nested checklist items should be treated as steps by default, not forced child tasks.
@@ -218,6 +218,7 @@ Notes:
 - Source of semantic derivation rules: `docs/specs/semantic-derivation-v0.1.md`
 - Policy identifier: `semantic_derivation/v0.1`
 - Contract: identical Source IR bytes + identical semantic policy version produce byte-stable Semantic IR.
+- The semantic policy defines deterministic promotion for checkbox tasks, heading tasks, scope-owned metadata, nested checklist steps, and scoped evidence retention.
 
 ## Machine Protocol Contract (v0.1)
 
