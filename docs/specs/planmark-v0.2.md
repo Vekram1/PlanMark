@@ -47,7 +47,8 @@ PlanMark authoring supports mixed Markdown content, task-shaped blocks, and line
 Implementation note:
 
 - The current parser implementation now recognizes scope boundaries for heading sections and checkbox blocks, and metadata attachment is partially scope-aware for those shapes.
-- The current binary is still narrower than the full target contract below: it does not yet model a general structural Markdown layer, promote heading tasks semantically, or capture all nested block types as first-class structural entities.
+- The current binary also supports a conservative first semantic pass for the richer model: headings with explicit task metadata can be promoted to tasks, and nested checkbox items default to semantic steps rather than standalone tasks.
+- The implementation is still narrower than the full target contract below: it does not yet model a general structural Markdown layer or capture all nested block types as first-class structural entities.
 
 ## Task Shapes And Scope
 

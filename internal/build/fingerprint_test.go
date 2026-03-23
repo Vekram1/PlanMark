@@ -13,6 +13,11 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 		Horizon: "now",
 		Deps:    []string{"dep.b", "dep.a"},
 		Accept:  []string{"cmd:go test ./...", "text:output includes fingerprint"},
+		Steps: []ir.TaskStep{
+			{Title: "write code"},
+			{Title: "run tests"},
+		},
+		EvidenceNodeRefs: []string{"node.b", "node.a"},
 	}
 	reordered := ir.Task{
 		ID:      " fixture.task ",
@@ -20,6 +25,11 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 		Horizon: "NOW",
 		Deps:    []string{"dep.a", "dep.b"},
 		Accept:  []string{"text:output includes fingerprint", "cmd:go test ./..."},
+		Steps: []ir.TaskStep{
+			{Title: "run tests"},
+			{Title: "write code"},
+		},
+		EvidenceNodeRefs: []string{"node.a", "node.b"},
 	}
 
 	fpA := TaskSemanticFingerprint(base)
@@ -29,9 +39,9 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 	}
 
 	changed := reordered
-	changed.Accept = append(changed.Accept, "cmd:go test ./... -run TestExtra")
+	changed.Steps = append(changed.Steps, ir.TaskStep{Title: "review output"})
 	fpC := TaskSemanticFingerprint(changed)
 	if fpA == fpC {
-		t.Fatalf("expected fingerprint change when semantic accept criteria changes")
+		t.Fatalf("expected fingerprint change when semantic steps change")
 	}
 }

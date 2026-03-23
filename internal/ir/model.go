@@ -32,13 +32,22 @@ type SemanticIR struct {
 }
 
 type Task struct {
-	ID                  string   `json:"id"`
-	NodeRef             string   `json:"node_ref"`
-	Title               string   `json:"title"`
-	Horizon             string   `json:"horizon,omitempty"`
-	Deps                []string `json:"deps,omitempty"`
-	Accept              []string `json:"accept,omitempty"`
-	SemanticFingerprint string   `json:"semantic_fingerprint,omitempty"`
+	ID                  string     `json:"id"`
+	NodeRef             string     `json:"node_ref"`
+	Title               string     `json:"title"`
+	Horizon             string     `json:"horizon,omitempty"`
+	Deps                []string   `json:"deps,omitempty"`
+	Accept              []string   `json:"accept,omitempty"`
+	Steps               []TaskStep `json:"steps,omitempty"`
+	EvidenceNodeRefs    []string   `json:"evidence_node_refs,omitempty"`
+	SemanticFingerprint string     `json:"semantic_fingerprint,omitempty"`
+}
+
+type TaskStep struct {
+	NodeRef   string `json:"node_ref"`
+	Title     string `json:"title"`
+	Checked   bool   `json:"checked,omitempty"`
+	SliceHash string `json:"slice_hash,omitempty"`
 }
 
 type TaskCandidate struct {

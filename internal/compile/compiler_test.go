@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/vikramoddiraju/planmark/internal/ir"
 )
 
 func TestSourceRanges(t *testing.T) {
@@ -229,6 +231,82 @@ func TestCompile(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected semantic task id fixture.mixed.ir, got %#v", compiled.Semantic.Tasks)
+	}
+}
+
+func TestCompilePromotesHeadingTaskWithExplicitTaskMetadata(t *testing.T) {
+	src := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"We need additive rollout first.",
+	}, "\n")
+
+	compiled, err := CompilePlan("heading-task.md", []byte(src), NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile heading task: %v", err)
+	}
+	if len(compiled.Semantic.Tasks) != 1 {
+		t.Fatalf("expected exactly one semantic task, got %#v", compiled.Semantic.Tasks)
+	}
+	task := compiled.Semantic.Tasks[0]
+	if task.ID != "api.migrate" {
+		t.Fatalf("expected heading task id api.migrate, got %#v", task)
+	}
+	if task.Title != "Add migration" {
+		t.Fatalf("expected heading task title Add migration, got %#v", task)
+	}
+	if task.NodeRef == "" {
+		t.Fatalf("expected heading task node_ref")
+	}
+}
+
+func TestCompileTreatsNestedCheckboxesAsStepsByDefault(t *testing.T) {
+	src := strings.Join([]string{
+		"## Rollout",
+		"- [ ] Parent task",
+		"  @id rollout.parent",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  - [ ] write migration",
+		"  - [x] run verification",
+		"- [ ] Sibling task",
+		"  @id rollout.sibling",
+	}, "\n")
+
+	compiled, err := CompilePlan("nested-steps.md", []byte(src), NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile nested steps plan: %v", err)
+	}
+	if len(compiled.Semantic.Tasks) != 2 {
+		t.Fatalf("expected 2 semantic tasks, got %#v", compiled.Semantic.Tasks)
+	}
+
+	var parent ir.Task
+	for _, task := range compiled.Semantic.Tasks {
+		if task.ID == "rollout.parent" {
+			parent = task
+		}
+		if strings.Contains(task.Title, "write migration") || strings.Contains(task.Title, "run verification") {
+			t.Fatalf("expected nested checkbox not to become standalone task: %#v", task)
+		}
+	}
+	if parent.ID == "" {
+		t.Fatalf("expected rollout.parent task, got %#v", compiled.Semantic.Tasks)
+	}
+	if len(parent.Steps) != 2 {
+		t.Fatalf("expected 2 nested steps, got %#v", parent.Steps)
+	}
+	if parent.Steps[0].Title != "write migration" || parent.Steps[1].Title != "run verification" {
+		t.Fatalf("unexpected step titles: %#v", parent.Steps)
+	}
+
+	for _, candidate := range compiled.Semantic.TaskCandidates {
+		if strings.Contains(candidate.Title, "write migration") || strings.Contains(candidate.Title, "run verification") {
+			t.Fatalf("expected nested checkbox not to become standalone task candidate: %#v", candidate)
+		}
 	}
 }
 

@@ -12,8 +12,8 @@ The current direction is:
 Current implementation note:
 
 - The current parser and metadata attachment code are still narrower than this target language contract.
-- In the current binary, headings and checkbox lines remain the primary recognized source nodes, but their source slices now expand to structural scope boundaries and metadata ownership is partially scope-aware for heading sections versus checkbox blocks.
-- This document still describes a broader target language than the current implementation: heading-task promotion and richer nested structural modeling are follow-on work.
+- In the current binary, headings and checkbox lines remain the primary recognized source nodes, but their source slices now expand to structural scope boundaries, metadata ownership is partially scope-aware for heading sections versus checkbox blocks, headings with explicit task metadata can promote into semantic tasks, and nested checkbox items default to semantic steps.
+- This document still describes a broader target language than the current implementation: richer structural modeling for non-heading/non-checkbox blocks is still follow-on work.
 
 This document defines:
 
