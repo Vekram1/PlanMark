@@ -15,7 +15,7 @@ import (
 	"github.com/vikramoddiraju/planmark/internal/fsio"
 )
 
-const ProjectionSchemaVersionV01 = "v0.1"
+const ProjectionSchemaVersionV02 = "v0.2"
 const BeadsManifestSchemaVersionV01 = "v0.1"
 
 var ErrTransientSync = errors.New("transient tracker sync error")
@@ -31,10 +31,20 @@ type BeadsProjectionPayload struct {
 	ProjectionSchemaVersion string      `json:"projection_schema_version"`
 	ID                      string      `json:"id"`
 	Title                   string      `json:"title"`
+	Horizon                 string      `json:"horizon,omitempty"`
 	Anchor                  string      `json:"anchor"`
 	SourceRange             SourceRange `json:"source_range"`
 	SourceHash              string      `json:"source_hash"`
+	Dependencies            []string    `json:"dependencies,omitempty"`
 	AcceptanceDigest        string      `json:"acceptance_digest"`
+	Steps                   []BeadsStep `json:"steps,omitempty"`
+	EvidenceNodeRefs        []string    `json:"evidence_node_refs,omitempty"`
+}
+
+type BeadsStep struct {
+	Title   string `json:"title"`
+	Checked bool   `json:"checked,omitempty"`
+	NodeRef string `json:"node_ref,omitempty"`
 }
 
 type BeadsAdapter struct {
@@ -118,13 +128,14 @@ func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error)
 	}
 	projectionVersion := strings.TrimSpace(task.ProjectionVersion)
 	if projectionVersion == "" {
-		projectionVersion = ProjectionSchemaVersionV01
+		projectionVersion = ProjectionSchemaVersionV02
 	}
 
 	return BeadsProjectionPayload{
 		ProjectionSchemaVersion: projectionVersion,
 		ID:                      task.ID,
 		Title:                   task.Title,
+		Horizon:                 strings.TrimSpace(task.Horizon),
 		Anchor:                  anchor,
 		SourceRange: SourceRange{
 			Path:      task.SourcePath,
@@ -132,7 +143,10 @@ func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error)
 			EndLine:   task.SourceEndLine,
 		},
 		SourceHash:       task.SourceHash,
+		Dependencies:     orderedStrings(task.Deps),
 		AcceptanceDigest: acceptanceDigest(task.Accept),
+		Steps:            buildBeadsSteps(task.Steps),
+		EvidenceNodeRefs: orderedStrings(task.EvidenceNodeRefs),
 	}, nil
 }
 
@@ -356,6 +370,34 @@ func projectionHash(payload BeadsProjectionPayload) (string, error) {
 	}
 	sum := sha256.Sum256(blob)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func buildBeadsSteps(steps []TaskProjectionStep) []BeadsStep {
+	projected := make([]BeadsStep, 0, len(steps))
+	for _, step := range steps {
+		title := strings.TrimSpace(step.Title)
+		if title == "" {
+			continue
+		}
+		projected = append(projected, BeadsStep{
+			Title:   title,
+			Checked: step.Checked,
+			NodeRef: strings.TrimSpace(step.NodeRef),
+		})
+	}
+	return projected
+}
+
+func orderedStrings(values []string) []string {
+	ordered := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		ordered = append(ordered, trimmed)
+	}
+	return ordered
 }
 
 func runtimeHash(fields RuntimeFields) (string, error) {

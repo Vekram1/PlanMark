@@ -213,6 +213,7 @@ Notes:
 - Source of tracker reconcile rules: `docs/specs/tracker-reconcile-v0.1.md`
 - Policy identifier: `tracker_reconcile/v0.1`
 - Contract: PLAN remains canonical for structure/intent; tracker runtime fields are merged under explicit safe-pull rules.
+- Current Beads projection payloads expose richer semantic task scope through adapter-neutral fields such as `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
 
 ## Semantic Derivation Policy Link
 

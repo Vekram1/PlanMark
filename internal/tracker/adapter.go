@@ -6,6 +6,7 @@ import "context"
 type TaskProjection struct {
 	ID                string
 	Title             string
+	Horizon           string
 	Anchor            string
 	NodeRef           string
 	SourcePath        string
@@ -13,8 +14,17 @@ type TaskProjection struct {
 	SourceEndLine     int
 	SourceHash        string
 	CompileID         string
+	Deps              []string
 	Accept            []string
+	Steps             []TaskProjectionStep
+	EvidenceNodeRefs  []string
 	ProjectionVersion string
+}
+
+type TaskProjectionStep struct {
+	NodeRef string
+	Title   string
+	Checked bool
 }
 
 type TaskProvenance struct {

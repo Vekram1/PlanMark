@@ -1,7 +1,8 @@
 {
-  "projection_schema_version": "v0.1",
+  "projection_schema_version": "v0.2",
   "id": "fixture.task.golden_projection",
   "title": "Golden projection payload",
+  "horizon": "now",
   "anchor": "testdata/plans/mixed.md#L21",
   "source_range": {
     "path": "testdata/plans/mixed.md",
@@ -9,5 +10,23 @@
     "end_line": 24
   },
   "source_hash": "9999999999999999999999999999999999999999999999999999999999999999",
-  "acceptance_digest": "25d67dcab161e3d00420fb1e2d32396066a4d43b17815f00644616dce9ac2055"
+  "dependencies": [
+    "dep.schema",
+    "dep.runtime"
+  ],
+  "acceptance_digest": "25d67dcab161e3d00420fb1e2d32396066a4d43b17815f00644616dce9ac2055",
+  "steps": [
+    {
+      "title": "Write migration",
+      "node_ref": "node.step.1"
+    },
+    {
+      "title": "Verify rollback",
+      "checked": true,
+      "node_ref": "node.step.2"
+    }
+  ],
+  "evidence_node_refs": [
+    "node.evidence.1"
+  ]
 }

@@ -73,6 +73,12 @@ The reconcile policy is intentionally tracker-neutral even when the first implem
 - Semantic task identity, provenance, readiness metadata, and scoped evidence come from PLAN/IR.
 - Tracker adapters choose how to render that semantic task into the target system's available fields.
 - Runtime overlays remain tracker-owned regardless of rendering shape.
+- The current Beads projection payload schema is `v0.2` and carries adapter-neutral task fields needed for rendering:
+  - `horizon`
+  - ordered `dependencies`
+  - ordered execution `steps`
+  - ordered `evidence_node_refs`
+  - provenance/source mapping and acceptance digest
 
 Illustrative target mapping for the same semantic task:
 
