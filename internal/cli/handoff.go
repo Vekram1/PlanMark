@@ -16,13 +16,15 @@ import (
 )
 
 type handoffPacket struct {
-	Query             string                      `json:"query"`
-	PlanPath          string                      `json:"plan_path"`
-	GlobalContextRefs []string                    `json:"global_context_refs"`
-	Slice             contextpkg.OpenResult       `json:"slice"`
-	DepsPointers      []string                    `json:"deps_pointers,omitempty"`
-	Blockers          []contextpkg.ExplainBlocker `json:"blockers,omitempty"`
-	SuggestedMetadata []string                    `json:"suggested_metadata,omitempty"`
+	Query             string                       `json:"query"`
+	PlanPath          string                       `json:"plan_path"`
+	GlobalContextRefs []string                     `json:"global_context_refs"`
+	Slice             contextpkg.OpenResult        `json:"slice"`
+	Steps             []contextpkg.TaskStepContext `json:"steps,omitempty"`
+	Evidence          []contextpkg.EvidenceSlice   `json:"evidence,omitempty"`
+	DepsPointers      []string                     `json:"deps_pointers,omitempty"`
+	Blockers          []contextpkg.ExplainBlocker  `json:"blockers,omitempty"`
+	SuggestedMetadata []string                     `json:"suggested_metadata,omitempty"`
 }
 
 func runHandoff(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -112,6 +114,8 @@ func runHandoff(args []string, stdout io.Writer, stderr io.Writer) int {
 		PlanPath:          compiled.PlanPath,
 		GlobalContextRefs: []string{"AGENTS.md", "docs/context/global.md"},
 		Slice:             openResult,
+		Steps:             append([]contextpkg.TaskStepContext(nil), openResult.Steps...),
+		Evidence:          append([]contextpkg.EvidenceSlice(nil), openResult.Evidence...),
 	}
 
 	if strings.TrimSpace(openResult.TaskID) != "" {
@@ -156,6 +160,8 @@ func runHandoff(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "node_ref: %s\n", packet.Slice.NodeRef)
 		fmt.Fprintf(stdout, "source_range: %d-%d\n", packet.Slice.StartLine, packet.Slice.EndLine)
 		fmt.Fprintf(stdout, "slice_hash: %s\n", packet.Slice.SliceHash)
+		fmt.Fprintf(stdout, "steps: %d\n", len(packet.Steps))
+		fmt.Fprintf(stdout, "evidence: %d\n", len(packet.Evidence))
 		fmt.Fprintf(stdout, "deps_pointers: %d\n", len(packet.DepsPointers))
 		fmt.Fprintf(stdout, "blockers: %d\n", len(packet.Blockers))
 	default:

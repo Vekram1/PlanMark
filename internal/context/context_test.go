@@ -84,6 +84,46 @@ func TestL0PacketSupportsPromotedHeadingTasks(t *testing.T) {
 	}
 }
 
+func TestL0PacketIncludesStepsAndEvidence(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"- [ ] write migration",
+		"- [x] run verification",
+		"### Evidence",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := BuildL0(compiled, "api.migrate")
+	if err != nil {
+		t.Fatalf("build L0 packet: %v", err)
+	}
+	if len(packet.Steps) != 2 {
+		t.Fatalf("expected 2 steps, got %#v", packet.Steps)
+	}
+	if packet.Steps[0].Title != "write migration" || packet.Steps[1].Title != "run verification" {
+		t.Fatalf("unexpected step titles: %#v", packet.Steps)
+	}
+	if len(packet.Evidence) != 1 {
+		t.Fatalf("expected 1 evidence block, got %#v", packet.Evidence)
+	}
+	if packet.Evidence[0].Kind != "heading" || !strings.Contains(packet.Evidence[0].SliceText, "### Evidence") {
+		t.Fatalf("unexpected evidence block: %#v", packet.Evidence[0])
+	}
+}
+
 func TestL0PacketRefusesNowTaskMissingAccept(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")

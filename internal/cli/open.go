@@ -120,6 +120,8 @@ func runOpen(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "node_ref: %s\n", result.NodeRef)
 		fmt.Fprintf(stdout, "kind: %s\n", result.Kind)
 		fmt.Fprintf(stdout, "title: %s\n", result.Title)
+		fmt.Fprintf(stdout, "steps: %d\n", len(result.Steps))
+		fmt.Fprintf(stdout, "evidence: %d\n", len(result.Evidence))
 		fmt.Fprintf(stdout, "source_path: %s\n", result.SourcePath)
 		fmt.Fprintf(stdout, "source_range: %d-%d\n", result.StartLine, result.EndLine)
 		fmt.Fprintf(stdout, "slice_hash: %s\n", result.SliceHash)

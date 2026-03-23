@@ -11,13 +11,20 @@ import (
 )
 
 type taskSemanticFingerprintPayload struct {
-	ID               string   `json:"id"`
-	Title            string   `json:"title"`
-	Horizon          string   `json:"horizon,omitempty"`
-	Deps             []string `json:"deps,omitempty"`
-	Accept           []string `json:"accept,omitempty"`
-	StepTitles       []string `json:"step_titles,omitempty"`
-	EvidenceNodeRefs []string `json:"evidence_node_refs,omitempty"`
+	ID               string                `json:"id"`
+	Title            string                `json:"title"`
+	Horizon          string                `json:"horizon,omitempty"`
+	Deps             []string              `json:"deps,omitempty"`
+	Accept           []string              `json:"accept,omitempty"`
+	Steps            []taskStepFingerprint `json:"steps,omitempty"`
+	EvidenceNodeRefs []string              `json:"evidence_node_refs,omitempty"`
+}
+
+type taskStepFingerprint struct {
+	NodeRef   string `json:"node_ref,omitempty"`
+	Title     string `json:"title"`
+	Checked   bool   `json:"checked,omitempty"`
+	SliceHash string `json:"slice_hash,omitempty"`
 }
 
 func TaskSemanticFingerprint(task ir.Task) string {
@@ -27,7 +34,7 @@ func TaskSemanticFingerprint(task ir.Task) string {
 		Horizon:          strings.ToLower(strings.TrimSpace(task.Horizon)),
 		Deps:             normalizeValues(task.Deps),
 		Accept:           normalizeValues(task.Accept),
-		StepTitles:       orderedStepTitles(task.Steps),
+		Steps:            orderedSteps(task.Steps),
 		EvidenceNodeRefs: orderedValues(task.EvidenceNodeRefs),
 	}
 
@@ -49,16 +56,21 @@ func normalizeValues(values []string) []string {
 	return normalized
 }
 
-func orderedStepTitles(steps []ir.TaskStep) []string {
-	ordered := make([]string, 0, len(steps))
+func orderedSteps(steps []ir.TaskStep) []taskStepFingerprint {
+	fingerprints := make([]taskStepFingerprint, 0, len(steps))
 	for _, step := range steps {
-		trimmed := strings.TrimSpace(step.Title)
-		if trimmed == "" {
+		title := strings.TrimSpace(step.Title)
+		if title == "" {
 			continue
 		}
-		ordered = append(ordered, trimmed)
+		fingerprints = append(fingerprints, taskStepFingerprint{
+			NodeRef:   strings.TrimSpace(step.NodeRef),
+			Title:     title,
+			Checked:   step.Checked,
+			SliceHash: strings.TrimSpace(step.SliceHash),
+		})
 	}
-	return ordered
+	return fingerprints
 }
 
 func orderedValues(values []string) []string {

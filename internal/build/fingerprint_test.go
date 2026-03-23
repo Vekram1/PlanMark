@@ -14,8 +14,8 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 		Deps:    []string{"dep.b", "dep.a"},
 		Accept:  []string{"cmd:go test ./...", "text:output includes fingerprint"},
 		Steps: []ir.TaskStep{
-			{Title: "write code"},
-			{Title: "run tests"},
+			{NodeRef: "step.a", Title: "write code", SliceHash: "hash.a"},
+			{NodeRef: "step.b", Title: "run tests", Checked: true, SliceHash: "hash.b"},
 		},
 		EvidenceNodeRefs: []string{"node.b", "node.a"},
 	}
@@ -26,8 +26,8 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 		Deps:    []string{"dep.a", "dep.b"},
 		Accept:  []string{"text:output includes fingerprint", "cmd:go test ./..."},
 		Steps: []ir.TaskStep{
-			{Title: "run tests"},
-			{Title: "write code"},
+			{NodeRef: "step.b", Title: "run tests", Checked: true, SliceHash: "hash.b"},
+			{NodeRef: "step.a", Title: "write code", SliceHash: "hash.a"},
 		},
 		EvidenceNodeRefs: []string{"node.a", "node.b"},
 	}
@@ -43,5 +43,21 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 	fpC := TaskSemanticFingerprint(changed)
 	if fpB == fpC {
 		t.Fatalf("expected fingerprint change when semantic steps change")
+	}
+
+	checkedChanged := base
+	checkedChanged.Steps = append([]ir.TaskStep(nil), base.Steps...)
+	checkedChanged.Steps[1].Checked = false
+	fpD := TaskSemanticFingerprint(checkedChanged)
+	if fpA == fpD {
+		t.Fatalf("expected fingerprint change when step checked state changes")
+	}
+
+	provenanceChanged := base
+	provenanceChanged.Steps = append([]ir.TaskStep(nil), base.Steps...)
+	provenanceChanged.Steps[0].SliceHash = "hash.changed"
+	fpE := TaskSemanticFingerprint(provenanceChanged)
+	if fpA == fpE {
+		t.Fatalf("expected fingerprint change when step provenance changes")
 	}
 }

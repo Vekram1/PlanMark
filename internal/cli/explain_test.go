@@ -93,3 +93,30 @@ func TestExplainRichOutputIncludesStructuredBlockers(t *testing.T) {
 		t.Fatalf("expected suggestion in rich explain output, got %q", out.String())
 	}
 }
+
+func TestExplainOutputIncludesStepAndEvidenceCounts(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"- [ ] write migration",
+		"### Evidence",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := runExplain([]string{"--plan", planPath, "api.migrate"}, &out, &errOut)
+	if exit != protocol.ExitSuccess {
+		t.Fatalf("expected success exit, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "step_count: 1") || !strings.Contains(out.String(), "evidence_refs: 1") {
+		t.Fatalf("expected step/evidence counts in explain output, got %q", out.String())
+	}
+}
