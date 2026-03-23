@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/vikramoddiraju/planmark/internal/tracker"
@@ -98,6 +99,66 @@ func TestBeadsSyncPlannerStableOps(t *testing.T) {
 		if !seenKinds[kind] {
 			t.Fatalf("expected operation kind %q in plan, got %#v", kind, gotA)
 		}
+	}
+}
+
+func TestProjectionHashForTaskIncludesStructuredProjectionFields(t *testing.T) {
+	base := tracker.TaskProjection{
+		ID:    "task.structured",
+		Title: "Structured projection",
+		Provenance: tracker.TaskProvenance{
+			NodeRef:    "plan.md|heading|task#1",
+			Path:       "plan.md",
+			StartLine:  10,
+			EndLine:    18,
+			SourceHash: strings.Repeat("a", 64),
+			CompileID:  strings.Repeat("b", 64),
+		},
+		Evidence: []tracker.TaskProjectionEvidence{
+			{NodeRef: "plan.md|table|evidence#1", Kind: "table"},
+		},
+		Sections: []tracker.TaskProjectionSection{
+			{Key: "why", Title: "Why", Body: []string{"Preserve old workers during rollout."}},
+		},
+	}
+
+	sameSemanticDefaultVersion := base
+	sameSemanticDefaultVersion.ProjectionVersion = tracker.ProjectionSchemaVersionV02
+
+	baseHash, err := ProjectionHashForTask(base)
+	if err != nil {
+		t.Fatalf("hash base projection: %v", err)
+	}
+	sameHash, err := ProjectionHashForTask(sameSemanticDefaultVersion)
+	if err != nil {
+		t.Fatalf("hash default-version-equivalent projection: %v", err)
+	}
+	if baseHash != sameHash {
+		t.Fatalf("expected empty/default projection version to hash the same: %q vs %q", baseHash, sameHash)
+	}
+
+	changedEvidenceKind := base
+	changedEvidenceKind.Evidence = []tracker.TaskProjectionEvidence{
+		{NodeRef: "plan.md|table|evidence#1", Kind: "code_fence"},
+	}
+	changedEvidenceHash, err := ProjectionHashForTask(changedEvidenceKind)
+	if err != nil {
+		t.Fatalf("hash evidence-kind projection: %v", err)
+	}
+	if changedEvidenceHash == baseHash {
+		t.Fatalf("expected evidence kind to affect projection hash")
+	}
+
+	changedSection := base
+	changedSection.Sections = []tracker.TaskProjectionSection{
+		{Key: "why", Title: "Why", Body: []string{"Preserve old workers.", "Validate staged rollout."}},
+	}
+	changedSectionHash, err := ProjectionHashForTask(changedSection)
+	if err != nil {
+		t.Fatalf("hash section projection: %v", err)
+	}
+	if changedSectionHash == baseHash {
+		t.Fatalf("expected structured sections to affect projection hash")
 	}
 }
 

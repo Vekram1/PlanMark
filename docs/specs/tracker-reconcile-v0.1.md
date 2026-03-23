@@ -71,14 +71,16 @@ These classes are machine-facing contract surfaces for dry-run/apply behavior.
 The reconcile policy is intentionally tracker-neutral even when the first implementation targets Beads.
 
 - Semantic task identity, provenance, readiness metadata, and scoped evidence come from PLAN/IR.
+- A tracker-neutral `TaskProjectionV2` sits between Semantic IR and adapter rendering so adapters consume canonical task semantics rather than Beads-specific fields.
 - Tracker adapters choose how to render that semantic task into the target system's available fields.
 - Runtime overlays remain tracker-owned regardless of rendering shape.
-- The current Beads projection payload schema is `v0.2` and carries adapter-neutral task fields needed for rendering:
+- The current Beads projection payload schema is `v0.2` and is built from that projection layer, carrying the subset of adapter-neutral task fields that Beads currently renders:
   - `horizon`
   - ordered `dependencies`
   - ordered execution `steps`
   - ordered `evidence_node_refs`
   - provenance/source mapping and acceptance digest
+- Sync planning hashes the full canonical `TaskProjectionV2`, including reserved projection fields such as structured `sections` and evidence `kind`, so semantic projection changes are still detected before every adapter renders every field.
 
 Illustrative target mapping for the same semantic task:
 

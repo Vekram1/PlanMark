@@ -1,9 +1,6 @@
 package syncplanner
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -253,16 +250,7 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 }
 
 func ProjectionHashForTask(task tracker.TaskProjection) (string, error) {
-	payload, err := tracker.BuildProjectionPayload(task)
-	if err != nil {
-		return "", err
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal projection payload: %w", err)
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
+	return tracker.TaskProjectionHash(task)
 }
 
 func provenanceComparable(p tracker.TaskProvenance) bool {
