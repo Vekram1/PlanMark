@@ -15,6 +15,7 @@ const (
 )
 
 type RenderedChecklistItem struct {
+	NodeRef string `json:"node_ref,omitempty"`
 	Title   string `json:"title"`
 	Checked bool   `json:"checked,omitempty"`
 }
@@ -129,6 +130,7 @@ func renderNativeSteps(steps []TaskProjectionStep) []RenderedChecklistItem {
 			continue
 		}
 		rendered = append(rendered, RenderedChecklistItem{
+			NodeRef: strings.TrimSpace(step.NodeRef),
 			Title:   title,
 			Checked: step.Checked,
 		})

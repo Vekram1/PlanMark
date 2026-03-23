@@ -161,6 +161,72 @@ func TestBeadsProjectionPayloadPreservesOrderedRicherFields(t *testing.T) {
 	}
 }
 
+func TestBeadsAdapterRenderTaskProjectionUsesDefaultProfile(t *testing.T) {
+	adapter := NewBeadsAdapter()
+	task := TaskProjection{
+		ID:      "fixture.task.rendered",
+		Title:   "Rendered through beads adapter",
+		Horizon: "now",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  8,
+			EndLine:    12,
+			SourceHash: strings.Repeat("e", 64),
+		},
+		Dependencies: []string{"dep.schema"},
+		Acceptance:   []string{"cmd:go test ./... -run TestCompile"},
+		Sections: []TaskProjectionSection{
+			{Key: "why", Body: []string{"Need a deterministic tracker body"}},
+		},
+		Steps: []TaskProjectionStep{
+			{NodeRef: "node.step.1", Title: "Write migration"},
+		},
+	}
+
+	rendered, err := adapter.RenderTaskProjection(task)
+	if err != nil {
+		t.Fatalf("render task projection: %v", err)
+	}
+	if rendered.Profile != BeadsRenderProfile {
+		t.Fatalf("expected beads render profile %q, got %q", BeadsRenderProfile, rendered.Profile)
+	}
+	if rendered.StepMode != CapabilityRendered {
+		t.Fatalf("expected beads adapter to render steps into the body, got %q", rendered.StepMode)
+	}
+	if len(rendered.Steps) != 0 {
+		t.Fatalf("expected no native rendered steps for beads, got %#v", rendered.Steps)
+	}
+	body := strings.Join(rendered.Body, "\n")
+	if !strings.Contains(body, "## Why") {
+		t.Fatalf("expected rendered body to contain section heading, got %q", body)
+	}
+	if !strings.Contains(body, "## Steps") {
+		t.Fatalf("expected rendered body to contain steps heading, got %q", body)
+	}
+	if !strings.Contains(body, "- [ ] Write migration") {
+		t.Fatalf("expected rendered body to contain rendered checklist step, got %q", body)
+	}
+}
+
+func TestBuildBeadsStepsFromRenderedPreservesNodeRefsForNativeSteps(t *testing.T) {
+	rendered := RenderedTask{
+		StepMode: CapabilityNative,
+		Steps: []RenderedChecklistItem{
+			{NodeRef: "node.step.1", Title: "Write migration"},
+			{NodeRef: "node.step.2", Title: "Verify rollback", Checked: true},
+		},
+	}
+
+	got := buildBeadsStepsFromRendered(rendered, nil)
+	want := []BeadsStep{
+		{NodeRef: "node.step.1", Title: "Write migration"},
+		{NodeRef: "node.step.2", Title: "Verify rollback", Checked: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected native rendered steps to preserve node refs\nwant=%#v\ngot=%#v", want, got)
+	}
+}
+
 func TestBeadsPushIdempotentOnProjectionHash(t *testing.T) {
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()

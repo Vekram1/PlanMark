@@ -93,6 +93,9 @@ func TestRenderTaskAgenticProfileUsesNativeStepsWhenAvailable(t *testing.T) {
 	if len(rendered.Steps) != 2 {
 		t.Fatalf("expected native steps, got %#v", rendered.Steps)
 	}
+	if rendered.Steps[0].NodeRef != "node.step.1" || rendered.Steps[1].NodeRef != "node.step.2" {
+		t.Fatalf("expected native rendered steps to preserve node refs, got %#v", rendered.Steps)
+	}
 	for _, line := range rendered.Body {
 		if strings.Contains(line, "## Steps") {
 			t.Fatalf("did not expect rendered step block when native step support exists, got %#v", rendered.Body)
@@ -168,8 +171,8 @@ func fixtureRenderedTask() TaskProjection {
 		Dependencies: []string{"api.schema", "api.runtime"},
 		Acceptance:   []string{"cmd:go test ./..."},
 		Steps: []TaskProjectionStep{
-			{Title: "Write additive migration"},
-			{Title: "Verify rollback", Checked: true},
+			{NodeRef: "node.step.1", Title: "Write additive migration"},
+			{NodeRef: "node.step.2", Title: "Verify rollback", Checked: true},
 		},
 		Evidence: []TaskProjectionEvidence{
 			{NodeRef: "node.evidence.1", Kind: "table"},

@@ -17,6 +17,7 @@ import (
 
 const ProjectionSchemaVersionV02 = "v0.2"
 const BeadsManifestSchemaVersionV01 = "v0.1"
+const BeadsRenderProfile = RenderProfileDefault
 
 var ErrTransientSync = errors.New("transient tracker sync error")
 var ErrRateLimitedSync = errors.New("tracker rate limited")
@@ -138,6 +139,10 @@ func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error)
 	if strings.TrimSpace(task.Provenance.SourceHash) == "" {
 		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q requires source hash", task.ID)
 	}
+	rendered, err := RenderTask(task, NewBeadsAdapter().Capabilities(), BeadsRenderProfile)
+	if err != nil {
+		return BeadsProjectionPayload{}, fmt.Errorf("render beads task: %w", err)
+	}
 
 	anchor := strings.TrimSpace(task.Anchor)
 	if anchor == "" {
@@ -151,7 +156,7 @@ func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error)
 	return BeadsProjectionPayload{
 		ProjectionSchemaVersion: projectionVersion,
 		ID:                      task.ID,
-		Title:                   task.Title,
+		Title:                   rendered.Title,
 		Horizon:                 strings.TrimSpace(task.Horizon),
 		Anchor:                  anchor,
 		SourceRange: SourceRange{
@@ -162,9 +167,13 @@ func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error)
 		SourceHash:       task.Provenance.SourceHash,
 		Dependencies:     orderedStrings(task.Dependencies),
 		AcceptanceDigest: acceptanceDigest(task.Acceptance),
-		Steps:            buildBeadsSteps(task.Steps),
+		Steps:            buildBeadsStepsFromRendered(rendered, task.Steps),
 		EvidenceNodeRefs: orderedEvidenceRefs(task.Evidence),
 	}, nil
+}
+
+func (a *BeadsAdapter) RenderTaskProjection(task TaskProjection) (RenderedTask, error) {
+	return RenderTask(task, a.Capabilities(), BeadsRenderProfile)
 }
 
 func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushResult, error) {
@@ -396,6 +405,25 @@ func buildBeadsSteps(steps []TaskProjectionStep) []BeadsStep {
 		})
 	}
 	return projected
+}
+
+func buildBeadsStepsFromRendered(rendered RenderedTask, fallback []TaskProjectionStep) []BeadsStep {
+	if rendered.StepMode == CapabilityNative && len(rendered.Steps) > 0 {
+		projected := make([]BeadsStep, 0, len(rendered.Steps))
+		for _, step := range rendered.Steps {
+			title := strings.TrimSpace(step.Title)
+			if title == "" {
+				continue
+			}
+			projected = append(projected, BeadsStep{
+				Title:   title,
+				Checked: step.Checked,
+				NodeRef: strings.TrimSpace(step.NodeRef),
+			})
+		}
+		return projected
+	}
+	return buildBeadsSteps(fallback)
 }
 
 func orderedStrings(values []string) []string {
