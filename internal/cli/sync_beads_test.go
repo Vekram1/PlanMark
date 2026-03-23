@@ -117,8 +117,8 @@ func TestSyncBeadsProjectsRicherSemanticTaskFields(t *testing.T) {
 	if got.Horizon != "now" {
 		t.Fatalf("expected horizon now, got %#v", got)
 	}
-	if !reflect.DeepEqual(got.Deps, []string{"api.schema", "api.runtime"}) {
-		t.Fatalf("unexpected deps: %#v", got.Deps)
+	if !reflect.DeepEqual(got.Dependencies, []string{"api.schema", "api.runtime"}) {
+		t.Fatalf("unexpected deps: %#v", got.Dependencies)
 	}
 	if len(got.Steps) != 2 {
 		t.Fatalf("expected two projected steps, got %#v", got.Steps)
@@ -126,8 +126,11 @@ func TestSyncBeadsProjectsRicherSemanticTaskFields(t *testing.T) {
 	if got.Steps[0].Title != "Write additive migration" || got.Steps[1].Title != "Verify rollback" || !got.Steps[1].Checked {
 		t.Fatalf("unexpected projected steps: %#v", got.Steps)
 	}
-	if len(got.EvidenceNodeRefs) != 1 {
-		t.Fatalf("expected one projected evidence node ref, got %#v", got.EvidenceNodeRefs)
+	if len(got.Evidence) != 1 {
+		t.Fatalf("expected one projected evidence node ref, got %#v", got.Evidence)
+	}
+	if got.Provenance.NodeRef == "" || got.Provenance.Path == "" || got.Provenance.SourceHash == "" {
+		t.Fatalf("expected populated provenance, got %#v", got.Provenance)
 	}
 }
 

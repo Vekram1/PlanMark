@@ -17,16 +17,18 @@ import (
 
 func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
 	task := TaskProjection{
-		ID:              "fixture.task.now",
-		Title:           "Implement deterministic output",
-		Horizon:         "now",
-		Anchor:          "testdata/plans/mixed.md#L12",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 12,
-		SourceEndLine:   14,
-		SourceHash:      strings.Repeat("a", 64),
-		Deps:            []string{"dep.schema", "dep.runtime"},
-		Accept: []string{
+		ID:      "fixture.task.now",
+		Title:   "Implement deterministic output",
+		Horizon: "now",
+		Anchor:  "testdata/plans/mixed.md#L12",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  12,
+			EndLine:    14,
+			SourceHash: strings.Repeat("a", 64),
+		},
+		Dependencies: []string{"dep.schema", "dep.runtime"},
+		Acceptance: []string{
 			"cmd:go test ./... -run TestCompile",
 			"file:.planmark/tmp/plan.json exists",
 		},
@@ -34,7 +36,10 @@ func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
 			{NodeRef: "node.step.1", Title: "Write migration"},
 			{NodeRef: "node.step.2", Title: "Verify rollback", Checked: true},
 		},
-		EvidenceNodeRefs: []string{"node.evidence.1", "node.evidence.2"},
+		Evidence: []TaskProjectionEvidence{
+			{NodeRef: "node.evidence.1"},
+			{NodeRef: "node.evidence.2"},
+		},
 	}
 
 	payload, err := BuildProjectionPayload(task)
@@ -51,20 +56,20 @@ func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
 	if payload.Anchor == "" {
 		t.Fatalf("expected non-empty anchor")
 	}
-	if payload.SourceRange.Path != task.SourcePath {
-		t.Fatalf("expected source path %q, got %q", task.SourcePath, payload.SourceRange.Path)
+	if payload.SourceRange.Path != task.Provenance.Path {
+		t.Fatalf("expected source path %q, got %q", task.Provenance.Path, payload.SourceRange.Path)
 	}
-	if payload.SourceRange.StartLine != task.SourceStartLine || payload.SourceRange.EndLine != task.SourceEndLine {
-		t.Fatalf("expected source range %d-%d, got %d-%d", task.SourceStartLine, task.SourceEndLine, payload.SourceRange.StartLine, payload.SourceRange.EndLine)
+	if payload.SourceRange.StartLine != task.Provenance.StartLine || payload.SourceRange.EndLine != task.Provenance.EndLine {
+		t.Fatalf("expected source range %d-%d, got %d-%d", task.Provenance.StartLine, task.Provenance.EndLine, payload.SourceRange.StartLine, payload.SourceRange.EndLine)
 	}
-	if payload.SourceHash != task.SourceHash {
-		t.Fatalf("expected source hash %q, got %q", task.SourceHash, payload.SourceHash)
+	if payload.SourceHash != task.Provenance.SourceHash {
+		t.Fatalf("expected source hash %q, got %q", task.Provenance.SourceHash, payload.SourceHash)
 	}
 	if payload.Horizon != task.Horizon {
 		t.Fatalf("expected horizon %q, got %q", task.Horizon, payload.Horizon)
 	}
-	if !reflect.DeepEqual(payload.Dependencies, task.Deps) {
-		t.Fatalf("expected dependencies %#v, got %#v", task.Deps, payload.Dependencies)
+	if !reflect.DeepEqual(payload.Dependencies, task.Dependencies) {
+		t.Fatalf("expected dependencies %#v, got %#v", task.Dependencies, payload.Dependencies)
 	}
 	if payload.AcceptanceDigest == "" {
 		t.Fatalf("expected non-empty acceptance digest")
@@ -78,19 +83,21 @@ func TestBeadsProjectionPayloadContainsHashes(t *testing.T) {
 	if payload.Steps[1].Title != "Verify rollback" || !payload.Steps[1].Checked {
 		t.Fatalf("expected ordered step projection, got %#v", payload.Steps)
 	}
-	if !reflect.DeepEqual(payload.EvidenceNodeRefs, task.EvidenceNodeRefs) {
-		t.Fatalf("expected evidence refs %#v, got %#v", task.EvidenceNodeRefs, payload.EvidenceNodeRefs)
+	if !reflect.DeepEqual(payload.EvidenceNodeRefs, []string{"node.evidence.1", "node.evidence.2"}) {
+		t.Fatalf("expected evidence refs %#v, got %#v", []string{"node.evidence.1", "node.evidence.2"}, payload.EvidenceNodeRefs)
 	}
 }
 
 func TestBeadsProjectionPayloadRespectsProjectionVersion(t *testing.T) {
 	task := TaskProjection{
-		ID:                "fixture.task.version",
-		Title:             "Projection version passthrough",
-		SourcePath:        "testdata/plans/mixed.md",
-		SourceStartLine:   3,
-		SourceEndLine:     4,
-		SourceHash:        strings.Repeat("c", 64),
+		ID:    "fixture.task.version",
+		Title: "Projection version passthrough",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  3,
+			EndLine:    4,
+			SourceHash: strings.Repeat("c", 64),
+		},
 		ProjectionVersion: "v0.2",
 	}
 
@@ -105,25 +112,33 @@ func TestBeadsProjectionPayloadRespectsProjectionVersion(t *testing.T) {
 
 func TestBeadsProjectionPayloadPreservesOrderedRicherFields(t *testing.T) {
 	first := TaskProjection{
-		ID:              "fixture.task.ordered",
-		Title:           "Ordered payload",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 8,
-		SourceEndLine:   12,
-		SourceHash:      strings.Repeat("d", 64),
-		Deps:            []string{"dep.a", "dep.b"},
+		ID:    "fixture.task.ordered",
+		Title: "Ordered payload",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  8,
+			EndLine:    12,
+			SourceHash: strings.Repeat("d", 64),
+		},
+		Dependencies: []string{"dep.a", "dep.b"},
 		Steps: []TaskProjectionStep{
 			{NodeRef: "node.step.1", Title: "first"},
 			{NodeRef: "node.step.2", Title: "second"},
 		},
-		EvidenceNodeRefs: []string{"node.evidence.1", "node.evidence.2"},
+		Evidence: []TaskProjectionEvidence{
+			{NodeRef: "node.evidence.1"},
+			{NodeRef: "node.evidence.2"},
+		},
 	}
 	second := first
 	second.Steps = []TaskProjectionStep{
 		{NodeRef: "node.step.2", Title: "second"},
 		{NodeRef: "node.step.1", Title: "first"},
 	}
-	second.EvidenceNodeRefs = []string{"node.evidence.2", "node.evidence.1"}
+	second.Evidence = []TaskProjectionEvidence{
+		{NodeRef: "node.evidence.2"},
+		{NodeRef: "node.evidence.1"},
+	}
 
 	firstPayload, err := BuildProjectionPayload(first)
 	if err != nil {
@@ -151,13 +166,15 @@ func TestBeadsPushIdempotentOnProjectionHash(t *testing.T) {
 	ctx := context.Background()
 
 	task := TaskProjection{
-		ID:              "fixture.task.idempotent",
-		Title:           "Idempotent push check",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 7,
-		SourceEndLine:   9,
-		SourceHash:      strings.Repeat("b", 64),
-		Accept:          []string{"cmd:go test ./... -run TestCompile"},
+		ID:    "fixture.task.idempotent",
+		Title: "Idempotent push check",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  7,
+			EndLine:    9,
+			SourceHash: strings.Repeat("b", 64),
+		},
+		Acceptance: []string{"cmd:go test ./... -run TestCompile"},
 	}
 
 	first, err := adapter.PushTask(ctx, task)
@@ -251,13 +268,15 @@ func TestBeadsDetectProjectionDriftBySourceHashMismatch(t *testing.T) {
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()
 	task := TaskProjection{
-		ID:              "fixture.task.drift",
-		Title:           "Detect source hash drift",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 5,
-		SourceEndLine:   6,
-		SourceHash:      strings.Repeat("d", 64),
-		Accept:          []string{"cmd:go test ./..."},
+		ID:    "fixture.task.drift",
+		Title: "Detect source hash drift",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  5,
+			EndLine:    6,
+			SourceHash: strings.Repeat("d", 64),
+		},
+		Acceptance: []string{"cmd:go test ./..."},
 	}
 
 	drifted, err := adapter.DetectProjectionDrift(task)
@@ -279,7 +298,7 @@ func TestBeadsDetectProjectionDriftBySourceHashMismatch(t *testing.T) {
 		t.Fatalf("expected no drift for unchanged source hash")
 	}
 
-	task.SourceHash = strings.Repeat("e", 64)
+	task.Provenance.SourceHash = strings.Repeat("e", 64)
 	drifted, err = adapter.DetectProjectionDrift(task)
 	if err != nil {
 		t.Fatalf("detect projection drift after source change: %v", err)
@@ -293,13 +312,15 @@ func TestBeadsPushSurfacesDriftDiagnostic(t *testing.T) {
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()
 	task := TaskProjection{
-		ID:              "fixture.task.push_drift",
-		Title:           "Push drift diagnostic",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 10,
-		SourceEndLine:   12,
-		SourceHash:      strings.Repeat("f", 64),
-		Accept:          []string{"cmd:go test ./..."},
+		ID:    "fixture.task.push_drift",
+		Title: "Push drift diagnostic",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  10,
+			EndLine:    12,
+			SourceHash: strings.Repeat("f", 64),
+		},
+		Acceptance: []string{"cmd:go test ./..."},
 	}
 
 	first, err := adapter.PushTask(ctx, task)
@@ -310,7 +331,7 @@ func TestBeadsPushSurfacesDriftDiagnostic(t *testing.T) {
 		t.Fatalf("expected normal update diagnostic, got %q", first.Diagnostic)
 	}
 
-	task.SourceHash = strings.Repeat("0", 64)
+	task.Provenance.SourceHash = strings.Repeat("0", 64)
 	second, err := adapter.PushTask(ctx, task)
 	if err != nil {
 		t.Fatalf("second push: %v", err)
@@ -324,24 +345,28 @@ func TestBeadsWriteSyncManifest(t *testing.T) {
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()
 	firstTask := TaskProjection{
-		ID:              "fixture.task.manifest.a",
-		Title:           "Manifest A",
-		NodeRef:         "testdata/plans/mixed.md|checkbox|a#1",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 1,
-		SourceEndLine:   2,
-		SourceHash:      strings.Repeat("1", 64),
-		CompileID:       strings.Repeat("a", 64),
+		ID:    "fixture.task.manifest.a",
+		Title: "Manifest A",
+		Provenance: TaskProvenance{
+			NodeRef:    "testdata/plans/mixed.md|checkbox|a#1",
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  1,
+			EndLine:    2,
+			SourceHash: strings.Repeat("1", 64),
+			CompileID:  strings.Repeat("a", 64),
+		},
 	}
 	secondTask := TaskProjection{
-		ID:              "fixture.task.manifest.b",
-		Title:           "Manifest B",
-		NodeRef:         "testdata/plans/mixed.md|checkbox|b#1",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 3,
-		SourceEndLine:   4,
-		SourceHash:      strings.Repeat("2", 64),
-		CompileID:       strings.Repeat("b", 64),
+		ID:    "fixture.task.manifest.b",
+		Title: "Manifest B",
+		Provenance: TaskProvenance{
+			NodeRef:    "testdata/plans/mixed.md|checkbox|b#1",
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  3,
+			EndLine:    4,
+			SourceHash: strings.Repeat("2", 64),
+			CompileID:  strings.Repeat("b", 64),
+		},
 	}
 	if _, err := adapter.PushTask(ctx, secondTask); err != nil {
 		t.Fatalf("push second task: %v", err)
@@ -390,13 +415,13 @@ func TestBeadsWriteSyncManifest(t *testing.T) {
 	if manifest.Entries[1].LastSeenRuntimeHash != "" {
 		t.Fatalf("expected second entry to omit runtime hash, got %#v", manifest.Entries[1])
 	}
-	if manifest.Entries[0].NodeRef != firstTask.NodeRef || manifest.Entries[1].NodeRef != secondTask.NodeRef {
+	if manifest.Entries[0].NodeRef != firstTask.Provenance.NodeRef || manifest.Entries[1].NodeRef != secondTask.Provenance.NodeRef {
 		t.Fatalf("expected node refs in manifest entries, got %#v", manifest.Entries)
 	}
-	if manifest.Entries[0].SourcePath != firstTask.SourcePath || manifest.Entries[1].SourcePath != secondTask.SourcePath {
+	if manifest.Entries[0].SourcePath != firstTask.Provenance.Path || manifest.Entries[1].SourcePath != secondTask.Provenance.Path {
 		t.Fatalf("expected source paths in manifest entries, got %#v", manifest.Entries)
 	}
-	if manifest.Entries[0].CompileID != firstTask.CompileID || manifest.Entries[1].CompileID != secondTask.CompileID {
+	if manifest.Entries[0].CompileID != firstTask.Provenance.CompileID || manifest.Entries[1].CompileID != secondTask.Provenance.CompileID {
 		t.Fatalf("expected compile ids in manifest entries, got %#v", manifest.Entries)
 	}
 }
@@ -422,15 +447,17 @@ func TestBeadsWriteSyncManifestRespectsLock(t *testing.T) {
 
 func TestBeadsGoldenProjection(t *testing.T) {
 	task := TaskProjection{
-		ID:              "fixture.task.golden_projection",
-		Title:           "Golden projection payload",
-		Horizon:         "now",
-		SourcePath:      "testdata/plans/mixed.md",
-		SourceStartLine: 21,
-		SourceEndLine:   24,
-		SourceHash:      strings.Repeat("9", 64),
-		Deps:            []string{"dep.schema", "dep.runtime"},
-		Accept: []string{
+		ID:      "fixture.task.golden_projection",
+		Title:   "Golden projection payload",
+		Horizon: "now",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  21,
+			EndLine:    24,
+			SourceHash: strings.Repeat("9", 64),
+		},
+		Dependencies: []string{"dep.schema", "dep.runtime"},
+		Acceptance: []string{
 			"cmd:go test ./... -run TestCompile",
 			"cmd:go test ./... -run TestSync",
 		},
@@ -438,7 +465,7 @@ func TestBeadsGoldenProjection(t *testing.T) {
 			{NodeRef: "node.step.1", Title: "Write migration"},
 			{NodeRef: "node.step.2", Title: "Verify rollback", Checked: true},
 		},
-		EvidenceNodeRefs: []string{"node.evidence.1"},
+		Evidence: []TaskProjectionEvidence{{NodeRef: "node.evidence.1"}},
 	}
 	payload, err := BuildProjectionPayload(task)
 	if err != nil {

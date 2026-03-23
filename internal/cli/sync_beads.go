@@ -195,18 +195,19 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 		projection := tracker.TaskProjection{
-			ID:               task.ID,
-			Title:            task.Title,
-			Horizon:          task.Horizon,
-			SourcePath:       compiled.PlanPath,
-			SourceStartLine:  node.startLine,
-			SourceEndLine:    node.endLine,
-			SourceHash:       node.sliceHash,
-			NodeRef:          task.NodeRef,
-			CompileID:        compileID,
-			Deps:             append([]string(nil), task.Deps...),
-			Accept:           append([]string(nil), task.Accept...),
-			EvidenceNodeRefs: append([]string(nil), task.EvidenceNodeRefs...),
+			ID:      task.ID,
+			Title:   task.Title,
+			Horizon: task.Horizon,
+			Provenance: tracker.TaskProvenance{
+				NodeRef:    task.NodeRef,
+				Path:       compiled.PlanPath,
+				StartLine:  node.startLine,
+				EndLine:    node.endLine,
+				SourceHash: node.sliceHash,
+				CompileID:  compileID,
+			},
+			Dependencies: append([]string(nil), task.Deps...),
+			Acceptance:   append([]string(nil), task.Accept...),
 		}
 		if len(task.Steps) > 0 {
 			projection.Steps = make([]tracker.TaskProjectionStep, 0, len(task.Steps))
@@ -216,6 +217,12 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 					Title:   step.Title,
 					Checked: step.Checked,
 				})
+			}
+		}
+		if len(task.EvidenceNodeRefs) > 0 {
+			projection.Evidence = make([]tracker.TaskProjectionEvidence, 0, len(task.EvidenceNodeRefs))
+			for _, ref := range task.EvidenceNodeRefs {
+				projection.Evidence = append(projection.Evidence, tracker.TaskProjectionEvidence{NodeRef: ref})
 			}
 		}
 		hash, err := syncplanner.ProjectionHashForTask(projection)
