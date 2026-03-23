@@ -113,6 +113,9 @@ Current adapter/profile usage:
 - `beads` uses the `default` render profile internally while preserving its existing projection payload schema
 - `github` uses the `default` render profile to build deterministic issue title/body payloads and tracker labels
 
+Profile names are the current user-facing rendering selector.
+Future adapter-local template names, if added, must remain deterministic aliases layered on top of these profiles rather than an unrestricted text templating system.
+
 Selection sources are deterministic and repository-local:
 
 - explicit `plan sync` CLI flags (`--adapter`, `--profile`)
@@ -134,6 +137,84 @@ Illustrative target mapping for the same semantic task:
 
 The operation classes do not change across trackers.
 Only payload rendering changes.
+
+## Expansion Roadmap Beyond Beads And GitHub
+
+The next adapters should be added by capability family, not by one-off backend branches.
+
+Stage 1: markdown-issue family
+
+- Target shape:
+  - title support
+  - markdown body support
+  - rendered or native checklist support
+  - limited safe runtime overlays
+- Candidate adapters:
+  - `linear`
+  - `jira` phase 1: basic issue rendering only
+- Recommended starting profile:
+  - `default`
+- Goal:
+  - prove that the current projection + render-profile layer generalizes beyond Beads without requiring agent-specific payloads or custom-field-heavy behavior
+
+Stage 2: agentic tracker family
+
+- Target shape:
+  - title support
+  - markdown or structured body support
+  - native step or child-work support
+  - explicit machine-readable provenance blocks
+  - optional native custom field support
+- Candidate adapters:
+  - `ticket`
+  - `trekker`
+  - `beans`
+- Recommended starting profiles:
+  - `agentic`
+  - `handoff`
+- Goal:
+  - prove that PlanMark can project richer task scope into trackers that are optimized for agent execution and handoff rather than only human issue reading
+
+Stage 3: field-heavy enterprise family
+
+- Target shape:
+  - title support
+  - markdown or plain-text body support
+  - native custom field support
+  - deterministic degradation when optional capabilities are absent
+- Candidate adapters:
+  - `jira` phase 2: extended custom-field mappings on top of the basic issue renderer
+- Recommended starting profile:
+  - `compact` or `default`, depending on field pressure
+- Goal:
+  - keep the canonical projection stable while mapping selected semantic fields into backend-owned fields without leaking enterprise-specific assumptions into Semantic IR
+
+## Template/Profile Guidance
+
+Current implementation exposes deterministic named render profiles.
+
+- `default` should remain the baseline for most issue trackers
+- `compact` should remain the fallback for body-constrained or field-heavy backends
+- `agentic` should remain the baseline for machine-oriented trackers
+- `handoff` should remain the richer provenance-heavy variant for execution transfer workflows
+
+If adapter-local template names are introduced later, they should satisfy all of the following:
+
+- map deterministically onto one of the built-in render profiles
+- optionally enable adapter-local field layout choices without changing canonical projection semantics
+- validate against `TrackerCapabilities` before sync planning
+- avoid free-form user-authored template text in the canonical sync path
+
+## Adapter Proof Requirements
+
+An adapter should only be treated as proven when all of the following are true:
+
+- it consumes `TaskProjectionV2` rather than backend-shaped source structs
+- it declares deterministic `TrackerCapabilities`
+- it validates selected render profiles before payload construction
+- dry-run and apply use the same reconcile classification logic
+- sync hashes remain derived from the canonical projection rather than adapter-rendered text only
+- golden and determinism tests cover payload rendering, manifest behavior, and no-op stability
 
 ## Dry-Run / Apply Consistency
 
