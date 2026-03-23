@@ -14,7 +14,7 @@ If you want an agent to work from a plan without making the tracker or the model
 
 ## What A New User Should Expect
 
-You do not need to learn a separate DSL.
+You do not need to learn a separate DSL (Domain Specific Language).
 You write normal Markdown with a small amount of structured metadata.
 
 The basic workflow is:
@@ -65,7 +65,7 @@ Now replace `PLAN.md` with something small and real.
 
 ## Write Your First `PLAN.md`
 
-This is a good starting example:
+This is a good starting example for an API rollout feature:
 
 ```md
 # PLAN
