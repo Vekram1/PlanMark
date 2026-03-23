@@ -228,3 +228,26 @@ type TrackerAdapter interface {
 	PullRuntimeFields(ctx context.Context, ids []string) (map[string]RuntimeFields, error)
 	Capabilities() TrackerCapabilities
 }
+
+const SyncManifestSchemaVersionV01 = "v0.1"
+
+type SyncManifestEntry struct {
+	ID                  string `json:"id"`
+	RemoteID            string `json:"remote_id,omitempty"`
+	ProjectionHash      string `json:"projection_hash,omitempty"`
+	NodeRef             string `json:"node_ref,omitempty"`
+	SourcePath          string `json:"source_path,omitempty"`
+	SourceStartLine     int    `json:"source_start_line,omitempty"`
+	SourceEndLine       int    `json:"source_end_line,omitempty"`
+	SourceHash          string `json:"source_hash,omitempty"`
+	CompileID           string `json:"compile_id,omitempty"`
+	LastSeenRuntimeHash string `json:"last_seen_runtime_hash,omitempty"`
+}
+
+type SyncManifest struct {
+	SchemaVersion string              `json:"schema_version"`
+	Entries       []SyncManifestEntry `json:"entries"`
+}
+
+type BeadsManifestEntry = SyncManifestEntry
+type BeadsSyncManifest = SyncManifest

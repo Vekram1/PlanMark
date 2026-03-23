@@ -215,7 +215,10 @@ Notes:
 - Contract: PLAN remains canonical for structure/intent; tracker runtime fields are merged under explicit safe-pull rules.
 - Tracker rendering now flows through a tracker-neutral task projection layer before adapter-specific payloads are built.
 - Tracker adapters expose deterministic capability descriptors so rendering/template policy can validate backend support for body text, steps, child work, custom fields, and safe runtime overlays.
+- Built-in rendering profiles are deterministic named policies (`default`, `compact`, `agentic`, `handoff`) layered on top of the tracker-neutral projection.
+- The current proven adapters are `beads` and a GitHub Issues proof adapter.
 - Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
+- The GitHub proof adapter renders deterministic markdown issue title/body payloads from the same tracker-neutral projection and render-profile layer.
 - Sync planning hashes the full canonical tracker-neutral projection, so reserved fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
 
 ## Semantic Derivation Policy Link
@@ -267,6 +270,28 @@ Rules:
   1. explicit CLI flags
   2. `.planmark.yaml` `ai:` values
   3. built-in defaults (no provider configured => local proposal-only behavior)
+
+### Tracker Sync Config Contract (`.planmark.yaml`)
+
+Tracker adapter and render-profile selection are repository-local configuration.
+
+Supported mapping:
+
+```yaml
+tracker:
+  adapter: beads
+  profile: default
+```
+
+Rules:
+- Unknown keys under `tracker:` are rejected deterministically.
+- Tracker config values contribute to effective config hashing for reproducibility diagnostics.
+- Selection precedence for `plan sync`:
+  1. explicit CLI flags (`--adapter`, `--profile`)
+  2. positional sync target (`plan sync beads`, `plan sync github`)
+  3. `.planmark.yaml` `tracker:` values
+  4. built-in defaults (`adapter=beads`, adapter default render profile)
+- Explicit CLI adapter selection must not conflict with an explicit positional target.
 
 ## Non-Goals for This Draft
 

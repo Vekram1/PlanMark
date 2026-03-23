@@ -28,6 +28,11 @@ const (
 profiles:
   doctor: loose
 
+# Optional tracker sync defaults:
+# tracker:
+#   adapter: beads
+#   profile: default
+
 # Optional AI provider settings for "plan ai apply-fix":
 # ai:
 #   provider: deterministic_mock
@@ -51,7 +56,7 @@ When operating in this project, you can use these ` + "`plan`" + ` commands:
 - ` + "`plan explain <id> --plan <path> [--format text|rich|json]`" + `
 - ` + "`plan handoff <id|node-ref> --plan <path> [--format text|json]`" + `
 - ` + "`plan query --plan <path> [--horizon now|next|later] [--ready|--blocked] [--format text|json]`" + `
-- ` + "`plan sync beads --plan <path> [--dry-run] [--format text|json]`" + `
+- ` + "`plan sync [beads|github] --plan <path> [--adapter beads|github] [--profile default|compact|agentic|handoff] [--dry-run] [--format text|json]`" + `
 - ` + "`plan changes --plan <path> [--format text|json]`" + `
 
 Optional assistive (non-canonical) commands:

@@ -16,7 +16,7 @@ import (
 )
 
 const ProjectionSchemaVersionV02 = "v0.2"
-const BeadsManifestSchemaVersionV01 = "v0.1"
+const BeadsManifestSchemaVersionV01 = SyncManifestSchemaVersionV01
 const BeadsRenderProfile = RenderProfileDefault
 
 var ErrTransientSync = errors.New("transient tracker sync error")
@@ -49,6 +49,7 @@ type BeadsStep struct {
 }
 
 type BeadsAdapter struct {
+	renderProfile      RenderProfile
 	projectionHashByID map[string]string
 	sourceHashByID     map[string]string
 	provenanceByID     map[string]TaskProvenance
@@ -58,26 +59,9 @@ type BeadsAdapter struct {
 	pushFailuresByID   map[string][]error
 }
 
-type BeadsManifestEntry struct {
-	ID                  string `json:"id"`
-	RemoteID            string `json:"remote_id,omitempty"`
-	ProjectionHash      string `json:"projection_hash,omitempty"`
-	NodeRef             string `json:"node_ref,omitempty"`
-	SourcePath          string `json:"source_path,omitempty"`
-	SourceStartLine     int    `json:"source_start_line,omitempty"`
-	SourceEndLine       int    `json:"source_end_line,omitempty"`
-	SourceHash          string `json:"source_hash,omitempty"`
-	CompileID           string `json:"compile_id,omitempty"`
-	LastSeenRuntimeHash string `json:"last_seen_runtime_hash,omitempty"`
-}
-
-type BeadsSyncManifest struct {
-	SchemaVersion string               `json:"schema_version"`
-	Entries       []BeadsManifestEntry `json:"entries"`
-}
-
 func NewBeadsAdapter() *BeadsAdapter {
 	return &BeadsAdapter{
+		renderProfile:      BeadsRenderProfile,
 		projectionHashByID: map[string]string{},
 		sourceHashByID:     map[string]string{},
 		provenanceByID:     map[string]TaskProvenance{},
@@ -85,6 +69,13 @@ func NewBeadsAdapter() *BeadsAdapter {
 		runtimeByID:        map[string]RuntimeFields{},
 		lastSeenRuntime:    map[string]string{},
 		pushFailuresByID:   map[string][]error{},
+	}
+}
+
+func (a *BeadsAdapter) SetRenderProfile(profile RenderProfile) {
+	a.renderProfile = normalizeRenderProfile(profile)
+	if a.renderProfile == "" {
+		a.renderProfile = BeadsRenderProfile
 	}
 }
 
@@ -127,53 +118,24 @@ func (a *BeadsAdapter) SeedFromSyncManifest(manifest BeadsSyncManifest) {
 }
 
 func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error) {
-	if strings.TrimSpace(task.ID) == "" {
-		return BeadsProjectionPayload{}, fmt.Errorf("task projection requires non-empty id")
-	}
-	if strings.TrimSpace(task.Provenance.Path) == "" {
-		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q requires source path", task.ID)
-	}
-	if task.Provenance.StartLine <= 0 || task.Provenance.EndLine < task.Provenance.StartLine {
-		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q has invalid source range %d-%d", task.ID, task.Provenance.StartLine, task.Provenance.EndLine)
-	}
-	if strings.TrimSpace(task.Provenance.SourceHash) == "" {
-		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q requires source hash", task.ID)
-	}
 	rendered, err := RenderTask(task, NewBeadsAdapter().Capabilities(), BeadsRenderProfile)
 	if err != nil {
 		return BeadsProjectionPayload{}, fmt.Errorf("render beads task: %w", err)
 	}
-
-	anchor := strings.TrimSpace(task.Anchor)
-	if anchor == "" {
-		anchor = fmt.Sprintf("%s#L%d", task.Provenance.Path, task.Provenance.StartLine)
-	}
-	projectionVersion := strings.TrimSpace(task.ProjectionVersion)
-	if projectionVersion == "" {
-		projectionVersion = ProjectionSchemaVersionV02
-	}
-
-	return BeadsProjectionPayload{
-		ProjectionSchemaVersion: projectionVersion,
-		ID:                      task.ID,
-		Title:                   rendered.Title,
-		Horizon:                 strings.TrimSpace(task.Horizon),
-		Anchor:                  anchor,
-		SourceRange: SourceRange{
-			Path:      task.Provenance.Path,
-			StartLine: task.Provenance.StartLine,
-			EndLine:   task.Provenance.EndLine,
-		},
-		SourceHash:       task.Provenance.SourceHash,
-		Dependencies:     orderedStrings(task.Dependencies),
-		AcceptanceDigest: acceptanceDigest(task.Acceptance),
-		Steps:            buildBeadsStepsFromRendered(rendered, task.Steps),
-		EvidenceNodeRefs: orderedEvidenceRefs(task.Evidence),
-	}, nil
+	return buildProjectionPayloadFromRendered(task, rendered)
 }
 
 func (a *BeadsAdapter) RenderTaskProjection(task TaskProjection) (RenderedTask, error) {
-	return RenderTask(task, a.Capabilities(), BeadsRenderProfile)
+	profile := a.renderProfile
+	if profile == "" {
+		profile = BeadsRenderProfile
+	}
+	return RenderTask(task, a.Capabilities(), profile)
+}
+
+func (a *BeadsAdapter) ValidateTask(task TaskProjection) error {
+	_, err := a.RenderTaskProjection(task)
+	return err
 }
 
 func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushResult, error) {
@@ -187,7 +149,11 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		return PushResult{}, err
 	}
 
-	payload, err := BuildProjectionPayload(task)
+	rendered, err := a.RenderTaskProjection(task)
+	if err != nil {
+		return PushResult{}, err
+	}
+	payload, err := buildProjectionPayloadFromRendered(task, rendered)
 	if err != nil {
 		return PushResult{}, err
 	}
@@ -229,6 +195,47 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		Mutated:    true,
 		Noop:       false,
 		Diagnostic: diagnostic,
+	}, nil
+}
+
+func buildProjectionPayloadFromRendered(task TaskProjection, rendered RenderedTask) (BeadsProjectionPayload, error) {
+	if strings.TrimSpace(task.ID) == "" {
+		return BeadsProjectionPayload{}, fmt.Errorf("task projection requires non-empty id")
+	}
+	if strings.TrimSpace(task.Provenance.Path) == "" {
+		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q requires source path", task.ID)
+	}
+	if task.Provenance.StartLine <= 0 || task.Provenance.EndLine < task.Provenance.StartLine {
+		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q has invalid source range %d-%d", task.ID, task.Provenance.StartLine, task.Provenance.EndLine)
+	}
+	if strings.TrimSpace(task.Provenance.SourceHash) == "" {
+		return BeadsProjectionPayload{}, fmt.Errorf("task projection %q requires source hash", task.ID)
+	}
+	anchor := strings.TrimSpace(task.Anchor)
+	if anchor == "" {
+		anchor = fmt.Sprintf("%s#L%d", task.Provenance.Path, task.Provenance.StartLine)
+	}
+	projectionVersion := strings.TrimSpace(task.ProjectionVersion)
+	if projectionVersion == "" {
+		projectionVersion = ProjectionSchemaVersionV02
+	}
+
+	return BeadsProjectionPayload{
+		ProjectionSchemaVersion: projectionVersion,
+		ID:                      task.ID,
+		Title:                   rendered.Title,
+		Horizon:                 strings.TrimSpace(task.Horizon),
+		Anchor:                  anchor,
+		SourceRange: SourceRange{
+			Path:      task.Provenance.Path,
+			StartLine: task.Provenance.StartLine,
+			EndLine:   task.Provenance.EndLine,
+		},
+		SourceHash:       task.Provenance.SourceHash,
+		Dependencies:     orderedStrings(task.Dependencies),
+		AcceptanceDigest: acceptanceDigest(task.Acceptance),
+		Steps:            buildBeadsStepsFromRendered(rendered, task.Steps),
+		EvidenceNodeRefs: orderedEvidenceRefs(task.Evidence),
 	}, nil
 }
 

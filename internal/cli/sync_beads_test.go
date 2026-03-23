@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vikramoddiraju/planmark/internal/config"
 	"github.com/vikramoddiraju/planmark/internal/journal"
 	"github.com/vikramoddiraju/planmark/internal/tracker"
 )
@@ -18,9 +19,15 @@ import (
 type captureBeadsAdapter struct {
 	pushed       []tracker.TaskProjection
 	manifestPath string
+	profile      tracker.RenderProfile
 }
 
-func (a *captureBeadsAdapter) SeedFromSyncManifest(_ tracker.BeadsSyncManifest) {}
+func (a *captureBeadsAdapter) SeedFromSyncManifest(_ tracker.SyncManifest)    {}
+func (a *captureBeadsAdapter) SetRenderProfile(profile tracker.RenderProfile) { a.profile = profile }
+func (a *captureBeadsAdapter) ValidateTask(_ tracker.TaskProjection) error    { return nil }
+func (a *captureBeadsAdapter) Capabilities() tracker.TrackerCapabilities {
+	return tracker.NewBeadsAdapter().Capabilities()
+}
 
 func (a *captureBeadsAdapter) PushTask(_ context.Context, task tracker.TaskProjection) (tracker.PushResult, error) {
 	a.pushed = append(a.pushed, task)
@@ -44,8 +51,32 @@ func TestSyncBeadsUsageRequiresTarget(t *testing.T) {
 	if exit != 2 {
 		t.Fatalf("expected usage exit code 2, got %d stderr=%q", exit, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "usage: plan sync beads") {
+	if !strings.Contains(errOut.String(), "missing --plan") {
 		t.Fatalf("expected usage text, got %q", errOut.String())
+	}
+}
+
+func TestSyncBeadsDefaultsToBeadsAdapter(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync default adapter",
+		"  @id fixture.task.sync.default_adapter",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "\"target\":\"beads\"") {
+		t.Fatalf("expected default beads target in json output, got %q", out.String())
 	}
 }
 
@@ -131,6 +162,117 @@ func TestSyncBeadsProjectsRicherSemanticTaskFields(t *testing.T) {
 	}
 	if got.Provenance.NodeRef == "" || got.Provenance.Path == "" || got.Provenance.SourceHash == "" {
 		t.Fatalf("expected populated provenance, got %#v", got.Provenance)
+	}
+}
+
+func TestSyncUsesConfigSelectedAdapterAndProfile(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	configPath := filepath.Join(tmp, ".planmark.yaml")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync github config",
+		"  @id fixture.task.sync.github",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	configBody := strings.Join([]string{
+		"schema_version: v0.1",
+		"tracker:",
+		"  adapter: github",
+		"  profile: compact",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "\"target\":\"github\"") {
+		t.Fatalf("expected github target in json output, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "\"command\":\"sync github\"") {
+		t.Fatalf("expected sync github command in json output, got %q", out.String())
+	}
+	manifestPath := filepath.Join(stateDir, "sync", "github-manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("expected github manifest at %q: %v", manifestPath, err)
+	}
+}
+
+func TestSyncCLIProfileOverridesConfigProfile(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	configPath := filepath.Join(tmp, ".planmark.yaml")
+	planBody := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"- [ ] Write additive migration",
+	}, "\n")
+	configBody := strings.Join([]string{
+		"schema_version: v0.1",
+		"tracker:",
+		"  adapter: beads",
+		"  profile: compact",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	restore := newBeadsSyncAdapter
+	adapter := &captureBeadsAdapter{}
+	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
+	defer func() { newBeadsSyncAdapter = restore }()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--profile", "agentic"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if adapter.profile != tracker.RenderProfileAgentic {
+		t.Fatalf("expected CLI profile override to set agentic profile, got %q", adapter.profile)
+	}
+}
+
+func TestResolveSyncSelectionPrefersAdapterFlagOverConfig(t *testing.T) {
+	cfg := config.Resolved{
+		Tracker: config.TrackerResolved{
+			Adapter: "github",
+			Profile: "compact",
+		},
+	}
+
+	adapter, profile, err := resolveSyncSelection("", "beads", "", cfg)
+	if err != nil {
+		t.Fatalf("resolve sync selection: %v", err)
+	}
+	if adapter != "beads" {
+		t.Fatalf("expected explicit adapter flag to win, got %q", adapter)
+	}
+	if profile != "compact" {
+		t.Fatalf("expected config profile fallback when no flag provided, got %q", profile)
+	}
+}
+
+func TestResolveSyncSelectionRejectsConflictingTargetAndAdapterFlag(t *testing.T) {
+	_, _, err := resolveSyncSelection("beads", "github", "", config.Resolved{})
+	if err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("expected target/adapter conflict error, got %v", err)
 	}
 }
 

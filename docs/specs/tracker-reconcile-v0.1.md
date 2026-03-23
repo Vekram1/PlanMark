@@ -94,6 +94,32 @@ Current capability descriptor categories:
 
 The descriptor is deterministic adapter metadata. It does not change the canonical task projection or reconcile operation classes.
 
+Current proven adapters:
+
+- `beads`: projection-backed local tracker with safe runtime overlays for `status`, `assignee`, and `priority`
+- `github`: GitHub Issues proof adapter with deterministic markdown issue rendering and safe runtime overlays for `status` and `assignee`
+
+Current built-in rendering profiles:
+
+- `default`: balanced issue/task rendering with section headings, rendered checklist steps when needed, and explicit provenance
+- `compact`: condensed body layout for backends or views where terse rendering is preferred
+- `agentic`: agent-facing layout with explicit task metadata, rationale, acceptance, evidence, and provenance blocks
+- `handoff`: handoff-oriented variant of the agentic layout with the same deterministic section ordering and fuller provenance emphasis
+
+Profiles are deterministic named policies layered on top of `TaskProjectionV2`. They are validated against `TrackerCapabilities` before adapter-specific payloads are built.
+
+Current adapter/profile usage:
+
+- `beads` uses the `default` render profile internally while preserving its existing projection payload schema
+- `github` uses the `default` render profile to build deterministic issue title/body payloads and tracker labels
+
+Selection sources are deterministic and repository-local:
+
+- explicit `plan sync` CLI flags (`--adapter`, `--profile`)
+- explicit positional sync target (`beads`, `github`)
+- `.planmark.yaml` `tracker:` defaults
+- built-in defaults when no tracker config is present
+
 Illustrative target mapping for the same semantic task:
 
 - Beads:
