@@ -83,6 +83,7 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 	ops := make([]Operation, 0, len(desired)+len(prior))
 	desiredHashesByID := make(map[string][]string, len(desired))
 	desiredProvenanceByID := make(map[string]tracker.TaskProvenance, len(desired))
+	desiredConflictReasons := make(map[string]string, len(desired))
 	for _, d := range desired {
 		id := strings.TrimSpace(d.ID)
 		if id == "" {
@@ -101,22 +102,12 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 	for _, id := range desiredIDs {
 		hashes := desiredHashesByID[id]
 		if len(hashes) > 1 {
-			ops = append(ops, Operation{
-				Kind:     OperationConflict,
-				ID:       id,
-				Reason:   "duplicate desired id",
-				Priority: 0,
-			})
+			desiredConflictReasons[id] = "duplicate desired id"
 			continue
 		}
 		hash := hashes[0]
 		if hash == "" {
-			ops = append(ops, Operation{
-				Kind:     OperationConflict,
-				ID:       id,
-				Reason:   "missing desired projection hash",
-				Priority: 0,
-			})
+			desiredConflictReasons[id] = "missing desired projection hash"
 			continue
 		}
 		desiredByID[id] = DesiredProjection{ID: id, ProjectionHash: hash, Provenance: desiredProvenanceByID[id]}
@@ -124,6 +115,7 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 	priorByID := make(map[string]PriorProjection, len(prior))
 	priorHashesByID := make(map[string][]string, len(prior))
 	priorProvenanceByID := make(map[string]tracker.TaskProvenance, len(prior))
+	priorConflictReasons := make(map[string]string, len(prior))
 	for _, p := range prior {
 		id := strings.TrimSpace(p.ID)
 		if id == "" {
@@ -142,12 +134,7 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 	for _, id := range priorIDs {
 		hashes := priorHashesByID[id]
 		if len(hashes) > 1 {
-			ops = append(ops, Operation{
-				Kind:     OperationConflict,
-				ID:       id,
-				Reason:   "duplicate prior id",
-				Priority: 0,
-			})
+			priorConflictReasons[id] = "duplicate prior id"
 			continue
 		}
 		priorByID[id] = PriorProjection{
@@ -157,7 +144,33 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 		}
 	}
 
+	conflictIDs := make(map[string]struct{}, len(desiredConflictReasons)+len(priorConflictReasons))
+	for id, reason := range desiredConflictReasons {
+		conflictIDs[id] = struct{}{}
+		ops = append(ops, Operation{
+			Kind:     OperationConflict,
+			ID:       id,
+			Reason:   reason,
+			Priority: 0,
+		})
+	}
+	for id, reason := range priorConflictReasons {
+		if _, exists := conflictIDs[id]; exists {
+			continue
+		}
+		conflictIDs[id] = struct{}{}
+		ops = append(ops, Operation{
+			Kind:     OperationConflict,
+			ID:       id,
+			Reason:   reason,
+			Priority: 0,
+		})
+	}
+
 	for id, d := range desiredByID {
+		if _, conflicted := conflictIDs[id]; conflicted {
+			continue
+		}
 		p, ok := priorByID[id]
 		if !ok {
 			ops = append(ops, Operation{
@@ -210,6 +223,9 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 		staleKind = OperationMarkStale
 	}
 	for id := range priorByID {
+		if _, conflicted := conflictIDs[id]; conflicted {
+			continue
+		}
 		if _, ok := desiredByID[id]; ok {
 			continue
 		}

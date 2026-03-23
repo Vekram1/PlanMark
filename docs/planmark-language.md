@@ -1,441 +1,289 @@
-# PlanMark Language Reference (v0.1)
+# PlanMark Language Reference (v0.2 draft)
 
-PlanMark is a **deterministic, lossless** “plan annotation language” embedded inside Markdown.
-It is intentionally **not** a general-purpose programming language.
+PlanMark is a deterministic planning language embedded directly inside Markdown.
+It is not a separate fenced-block language and it is not a general-purpose Markdown AST tool.
 
-The core idea:
+The current direction is:
 
-- `PLAN.md` may contain **any** free-form Markdown (prose, tables, diagrams).
-- PlanMark only acts on explicitly marked **actionable blocks**.
-- Everything else is preserved **verbatim** in the lossless IR but is not executed/projection-relevant.
+- `PLAN.md` remains ordinary Markdown for humans.
+- PlanMark promotes a small set of Markdown shapes into deterministic planning semantics.
+- Everything else is preserved for provenance and context, even when it does not receive task semantics.
 
-This doc defines:
+Current implementation note:
 
-1) what PlanMark can represent (“capabilities”)
-2) how to write it (syntax + types)
-3) what is validated strictly vs tolerated
-4) what the toolchain does with it (doctor / context packets / beads projection)
+- The current parser and metadata attachment code are narrower than this target language contract.
+- In the current binary, headings and checkbox lines are the primary recognized source nodes, and metadata attachment is simpler than the scope-based model described here.
+- This document describes the intended richer authoring model that later parser and semantic-policy work should implement.
+
+This document defines:
+
+1. what authors write
+2. what PlanMark treats as task structure
+3. what metadata means
+4. what remains human-only context
+5. how this improves tracker projection and agent context
 
 ---
 
 ## 1. Capability Summary
 
-PlanMark v0.1 supports these primitives:
+PlanMark v0.2 is intended to treat Markdown as a planning document with explicit structural conventions.
 
-- **Tasks / Beads**: define work items with stable IDs
-- **Dependencies**: explicit `deps` lists
-- **Acceptance criteria**: explicit checklists
-- **Invariants**: “must hold” constraints
-- **Budgets**: time/cost/token limits (descriptive; enforcement via `plan doctor`)
-- **Commands**: suggested commands to run (never run implicitly)
-- **Context pins**: pointers to text ranges in `PLAN.md` for context packets
-- **Projection**: deterministic mapping into Beads (lossy target) with provenance retained in PlanMark IR
+Supported planning primitives:
 
-Non-goals in v0.1 (by design):
+- tasks expressed as checklist items
+- tasks expressed as section headings
+- line-oriented metadata attached to a task or section scope
+- dependency lists via `@deps`
+- acceptance criteria via `@accept`
+- rationale and constraints via `@why`, `@risk`, `@rollback`, `@assume`, `@invariant`, `@non_goal`
+- nested checklist items as ordered execution steps by default
+- free-form prose, tables, and code fences preserved as contextual evidence inside a task scope
 
-- no conditionals, loops, arithmetic, or “execute on parse”
-- no implicit inference (“guessing”) of tasks from prose
-- no automatic execution of commands
-- no cross-file ref resolution unless explicitly enabled by a directive
+Non-goals:
+
+- no implicit command execution
+- no semantic guessing from arbitrary prose alone
+- no requirement that every Markdown block become a semantic object
+- no tracker-specific authoring syntax
 
 ---
 
-## 2. The “Two-Layer” Model
+## 2. Authoring Model
 
-### Layer A — Free-form Markdown (unrestricted)
-Anything in `PLAN.md` outside PlanMark blocks is treated as raw text:
+Under the intended richer model, authors write normal Markdown and follow a few explicit task-shaping rules.
 
-- preserved verbatim into `plan.json` (lossless IR)
-- eligible for context packets (L0 verbatim slices)
-- ignored for projection and validation gating
+### 2.1 Task shapes
 
-### Layer B — Actionable PlanMark blocks (structured + validated)
-Only fenced code blocks labeled `planmark` are parsed as PlanMark:
+A task may be authored in one of two canonical forms.
+
+Checkbox task:
 
 ```md
-```planmark
-id: bead-123
-title: Deterministic parser
-deps: [bead-101]
-acceptance:
-  - Parses all planmark blocks
-  - Produces lossless IR with provenance
-```
+- [ ] Add migration
+  @id api.migrate
+  @horizon now
+  @deps api.schema
+  @accept cmd:go test ./...
 ```
 
-If it isn’t inside a `planmark` block, it’s not actionable.
-
----
-
-## 3. Syntax
-
-### 3.1 Block form
-PlanMark blocks are fenced code blocks with the info string `planmark`:
+Heading task:
 
 ```md
-```planmark
-<body>
+## Add migration
+@id api.migrate
+@horizon now
+@deps api.schema
+@accept cmd:go test ./...
+
+We need additive rollout before removing legacy reads.
 ```
-```
 
-Everything inside `<body>` is parsed using a **YAML-like subset** defined below.
-This is a *format*, not “YAML the full language.”
+Use a checkbox task when the task is a compact work item.
+Use a heading task when the task needs scoped prose, tables, examples, or nested steps.
+A heading becomes a task only when task metadata or an explicit semantic promotion rule says it does; a bare heading remains structural context.
 
-### 3.2 Allowed value types (v0.1)
-- **String**: `title: Something`
-- **Number**: `budget_hours: 6`
-- **Boolean**: `done: false`
-- **List**:
-  - inline: `deps: [bead-1, bead-2]`
-  - multiline:
-    ```md
-    deps:
-      - bead-1
-      - bead-2
-    ```
-- **Map**:
-  ```md
-  budgets:
-    dev_hours: 6
-    token_budget: 120000
-  ```
-- **Multiline string** (`|`):
-  ```md
-  notes: |
-    This is preserved exactly.
-    Newlines remain newlines.
-  ```
+### 2.2 Task scope
 
-### 3.3 Comments
-Lines starting with `#` are comments **inside PlanMark blocks**.
-They are preserved in the lossless IR but ignored semantically.
+Task scope is the bounded region of Markdown that belongs to the task.
 
-### 3.4 Unknown keys (lossless rule)
-Unknown keys are allowed and preserved.  
-`plan doctor` may warn on unknown keys if strict mode is enabled, but parsing remains lossless.
+- For a checkbox task, scope begins at the checkbox line and includes directly attached metadata plus indented child content.
+- For a heading task, scope begins at the heading and extends until the next heading of the same or higher level.
+- Blocks inside a task scope are available for retrieval and context even when they are not promoted into task semantics.
+
+### 2.3 Planning-first rule
+
+The minimum viable task remains intentionally cheap:
+
+- checkbox or heading title
+- optional `@id`
+- optional `@horizon`
+
+Additional metadata can be added as the task becomes execution-ready.
+For heading tasks, some task metadata is expected so the heading is promoted as a task rather than treated as plain section structure.
 
 ---
 
-## 4. Core Entities
+## 3. Metadata Rules
 
-In v0.1, every block is one “item.” The item’s `kind` controls semantics.
-If `kind` is absent, it defaults to `task`.
+Metadata is line-oriented and uses `@key value` syntax.
 
-### 4.1 `task` (default)
-Represents a unit of work suitable for Beads projection.
-
-**Recommended fields**
-- `id` (string): stable identifier (`bead-123`, `task-foo`, etc.)
-- `title` (string): short human title
-- `summary` (string): 1–3 sentence intent
-- `deps` (list[string]): IDs this task depends on
-- `acceptance` (list[string]): acceptance criteria checklist
-- `invariants` (list[string]): constraints that must remain true
-- `budgets` (map): descriptive budgets (doctor can gate)
-- `commands` (list[string]): suggested commands to run (never auto-run)
-- `artifacts` (list[map]): output files/paths expected
-
-**Example**
-```md
-```planmark
-kind: task
-id: bead-123
-title: Implement tolerant parser
-summary: Parse planmark blocks without failing on unknown keys; preserve provenance.
-deps: [bead-101]
-acceptance:
-  - Parses all planmark blocks in PLAN.md
-  - Preserves verbatim content + line ranges
-  - Produces plan.json deterministically
-invariants:
-  - No implicit execution
-  - No deletion commands proposed without approval
-budgets:
-  dev_hours: 6
-commands:
-  - go test ./...
-  - golangci-lint run
-artifacts:
-  - path: plan.json
-    description: Lossless IR with provenance
-```
-```
-
-### 4.2 `section`
-Used to group multiple tasks under a labeled heading in IR.
+Example:
 
 ```md
-```planmark
-kind: section
-id: sec-parser
-title: Parser + IR
-```
+## Add migration
+@id api.migrate
+@horizon now
+@deps api.schema,api.verify
+@accept cmd:go test ./...
+@rollback restore pre-migration snapshot and revert migration file
 ```
 
-### 4.3 `context_pin`
-Pins a slice of `PLAN.md` for context packets.
-Pins are explicit and deterministic: they reference file + line ranges.
+Canonical keys:
+
+- `@id`
+- `@horizon`
+- `@deps`
+- `@accept`
+- `@why`
+- `@touches`
+- `@non_goal`
+- `@risk`
+- `@rollback`
+- `@assume`
+- `@invariant`
+
+Unknown keys are preserved as opaque metadata.
+
+### 3.1 Ownership rule
+
+In the intended richer model, metadata belongs to the nearest enclosing task or section scope, not merely the nearest preceding line.
+
+In practice:
+
+- metadata directly under a checkbox belongs to that checkbox task
+- metadata directly under a heading belongs to that heading task or section
+- metadata inside nested list indentation belongs to the nested item it is indented under
+- metadata before the first attachable block remains unattached and should produce a diagnostic
+
+### 3.2 Repeated keys
+
+The expected merge behavior is:
+
+- repeatable keys append in source order: `@deps`, `@accept`, `@touches`
+- scalar keys are last-wins with deterministic overwrite behavior: `@horizon`, `@why`
+
+Authors should still prefer one scalar metadata line per scope.
+
+---
+
+## 4. Nested Checklist Semantics
+
+Nested checklists improve execution detail without forcing extra tracker items by default.
+
+Example:
 
 ```md
-```planmark
-kind: context_pin
-id: pin-overview
-file: PLAN.md
-lines: [12, 47]
-label: High-level overview used in L1 context packets
+## Add migration
+@id api.migrate
+@horizon now
+@accept cmd:go test ./...
+
+- [ ] Write additive migration
+- [ ] Verify rollback path
+- [ ] Run local validation
 ```
-```
+
+Default interpretation:
+
+- the heading is the task
+- nested checklist items are execution steps within the task
+- the steps are preserved as scoped structured content for context and issue rendering
+
+Nested checklist items should only become child tasks under an explicit future policy.
+
+That default keeps authoring cheap and prevents accidental task explosion.
 
 ---
 
-## 5. Determinism Rules (Hard Invariants)
+## 5. Free-Form Content Inside A Task
 
-PlanMark’s toolchain must be deterministic. That means:
+Free-form Markdown remains valuable even when it does not become a typed semantic field.
 
-1) **No guessing**: tasks are only recognized inside `planmark` blocks.
-2) **Stable IDs**:
-   - If `id` is provided, it is the canonical identifier.
-   - If `id` is omitted, tools MAY generate a derived ID based on (file path + block start line + block hash),
-     but this should be treated as less stable than explicit `id`.
-3) **Canonicalization**:
-   - Whitespace normalization is limited to what is required to parse fields.
-   - Raw text is preserved exactly for provenance.
-4) **No hidden execution**:
-   - `commands` are documentation + checklists only.
-   - Tools never run commands unless explicitly invoked by the user.
+These blocks are preserved inside task scope:
+
+- paragraphs
+- tables
+- blockquotes
+- code fences
+- diagrams
+- mixed notes
+
+Example:
+
+~~~md
+## Add migration
+@id api.migrate
+@horizon now
+
+We need additive rollout because old workers may still read legacy columns.
+
+| phase | requirement |
+| --- | --- |
+| deploy | additive only |
+| cleanup | after verification |
+
+```sql
+ALTER TABLE ...
+```
+~~~
+
+The prose, table, and SQL snippet may not all become first-class semantic fields, but they remain part of the task's bounded context and can be exported to handoff packets or tracker bodies.
 
 ---
 
-## 6. Validation and “Plan Doctor”
+## 6. Ambiguity Rules
 
-`plan doctor` is a validator + gatekeeper, with two modes:
+PlanMark should prefer explicit structure over heuristics.
 
-### 6.1 Tolerant parse (always)
-- Always produces lossless IR (`plan.json`) if the markdown is readable.
-- Preserves unknown keys and raw block text.
+Author guidance:
 
-### 6.2 Strict gating (optional)
-In strict mode, doctor can fail the run if:
-- required fields for actionable projection are missing (e.g., missing `id` and strict IDs enabled)
-- `deps` reference unknown IDs (if strict dep checking enabled)
-- invalid types are provided (`deps` not a list, etc.)
-- policy violations occur (repo invariants / budgets / forbidden operations)
+- put metadata directly inside the task scope it belongs to
+- use headings to create broad task scopes
+- use nested lists for steps
+- avoid leaving metadata floating between unrelated sections
 
-Doctor outputs:
-- **errors** (block projection/execution)
-- **warnings** (allowed but risky / non-idiomatic)
-- **notes** (informational)
+Tool behavior:
+
+- ambiguous content is preserved, never silently dropped
+- ambiguous metadata should remain attached only when deterministic ownership rules resolve it cleanly
+- otherwise it remains unattached with a stable diagnostic
 
 ---
 
-## 7. Beads Projection Semantics
+## 7. What Authors Must Do
 
-Projection is deterministic and one-way (PlanMark IR remains source of truth).
+If you want predictable machine behavior, write plans with these habits:
 
-### 7.0 What happens to a `planmark` block (end-to-end)
-
-At a high level, projection is a *pure transform*:
-
-1) **Extract**: scan `PLAN.md` for fenced ```planmark blocks (and only those).
-2) **Parse (tolerant)**: parse each block into a typed map using the YAML-like subset.
-3) **Normalize**: canonicalize fields needed for deterministic rendering (ordering, whitespace rules).
-4) **Lossless IR write**: emit `plan.json` containing:
-   - raw block text (verbatim)
-   - parsed fields (including unknown keys)
-   - source provenance (file, start/end line, block hash)
-5) **Render bead payload**: construct a Beads “create/update” payload from the normalized item.
-6) **Project (API)**: create or update the bead using deterministic idempotency rules (below).
-
-Importantly:
-- Projection never mutates `PLAN.md`.
-- Projection never “guesses” missing fields from nearby prose.
-- Unknown keys are preserved in IR; only recognized fields affect the bead.
-
-### 7.1 Mapping
-For each `task` item:
-- Bead title := `title`
-- Bead body := `summary` + `acceptance` + `invariants` + selected pins
-- Tags := derived from `kind`, optional `tags` field
-- Dependencies := exported as references (exact behavior depends on Beads features)
-
-### 7.1.1 Deterministic bead body template (recommended)
-
-For consistency, the bead body SHOULD be rendered using a stable template and stable section ordering.
-Suggested canonical template (Markdown):
-
-````md
-## Summary
-<summary or empty>
-
-## Acceptance
-- [ ] <acceptance[0]>
-- [ ] <acceptance[1]>
-
-## Invariants
-- <invariants[0]>
-- <invariants[1]>
-
-## Suggested commands (manual)
-```sh
-<commands[0]>
-<commands[1]>
-```
-
-## Expected artifacts
-- `<artifacts[i].path>` — <artifacts[i].description>
-
-## Context pins
-- <pin label> (PLAN.md:L12-L47)
-
----
-PlanMark:
-- id: <id>
-- kind: <kind>
-- source: <file>:L<start>-L<end>
-- block_hash: <sha256:…>
-````
-
-Rules:
-- Sections are omitted if their corresponding field is missing/empty (except the final provenance block).
-- Lists preserve input order.
-- No automatic checkbox toggling based on external state (projection is pure).
-
-### 7.1.2 Field mapping rules (precise)
-
-The following mapping is normative in v0.1:
-
-- `title`:
-  - Required for projection in strict mode.
-  - Used as the Bead title verbatim (no inference).
-- `summary`:
-  - Rendered under **Summary** as-is (multiline preserved).
-- `acceptance`:
-  - Rendered as a checklist under **Acceptance** in the same order as specified.
-- `invariants`:
-  - Rendered as bullet list under **Invariants** in the same order as specified.
-- `commands`:
-  - Rendered under **Suggested commands (manual)** as a shell code block.
-  - Explicitly labeled “manual” to prevent implied execution.
-- `artifacts`:
-  - Rendered under **Expected artifacts**.
-  - Unknown fields inside each artifact map are preserved in IR but not rendered by default.
-- `deps`:
-  - Primary representation is via Beads dependency links (if supported).
-  - Always also rendered in the bead body under **Dependencies** if Beads does not support structured deps.
-- `tags`:
-  - Optional list. If present, used verbatim as bead tags (order preserved).
-  - If absent, tags MAY include `kind:<kind>` as a derived tag (configurable).
-
-Any keys not listed above:
-- MUST be preserved in `plan.json`
-- MUST NOT affect projection unless explicitly added to the mapping in a future language version.
-
-### 7.1.3 Handling missing IDs
-
-Best practice is to require explicit `id` for actionable tasks.
-If `id` is missing and strict IDs are disabled, tools MAY derive a deterministic ID:
-
-- `id := pm::<file>::<start_line>::<block_hash_prefix>`
-
-Derived IDs MUST be treated as unstable across edits (line shifts) and should produce a warning.
-
-### 7.1.4 Create vs Update (idempotency)
-
-Projection should be idempotent: running it twice with unchanged input should not create duplicates.
-
-Normative behavior:
-- The bead’s canonical identity is the PlanMark `id`.
-- On projection:
-  - If a bead already exists with `planmark.id == <id>`, UPDATE it.
-  - Otherwise, CREATE a new bead.
-
-The “exists” check can be implemented via:
-- a dedicated Beads metadata field (preferred), or
-- a stable marker in the bead body provenance block (fallback).
-
-### 7.1.5 Drift detection (Beads edits)
-
-Because Beads is a lossy target, PlanMark is source-of-truth.
-If a bead is edited in Beads, PlanMark does not auto-merge changes back.
-
-Tools SHOULD detect drift by comparing:
-- stored `block_hash` (in bead provenance) vs current `block_hash` for the same `id`
-and then:
-- report drift as a warning (or error in strict sync mode)
-- show a recommended patch to apply to `PLAN.md` (human-reviewed)
-
-### 7.2 Provenance
-Every projected bead includes:
-- the PlanMark `id`
-- source location (file + line range)
-- a hash of the original block text (to detect drift)
-
-If a bead is edited in Beads, PlanMark does not auto-merge changes back. Instead:
-- tools can **report drift** and recommend edits to `PLAN.md`
-
-### 7.3 Lossiness boundaries (what Beads will not preserve)
-
-Beads projection is intentionally lossy. In v0.1:
-- formatting inside lists may be normalized by Beads UI
-- unknown keys are not represented in Beads fields unless explicitly rendered in the body
-- Beads edits do not round-trip back into PlanMark automatically
-
-To keep the workflow deterministic:
-- PlanMark IR (`plan.json`) is the only canonical structured representation
-- Beads is a view/task-execution surface, not the source of truth
+- make each real work item either a checkbox task or a heading task
+- keep machine-relevant metadata inside that task's scope
+- use explicit `@id` for anything that will be synced to a tracker or depended on by another task
+- add `@accept` before marking a `@horizon now` task execution-ready
+- put rationale, risks, and rollback notes inside the task section instead of in distant prose
+- use nested checklist items for steps, not separate top-level tasks, unless they truly need independent lifecycle
 
 ---
 
-## 8. Examples (copy/paste)
+## 8. Why This Helps
 
-### Minimal task
-```md
-```planmark
-id: bead-001
-title: Establish repo skeleton
-acceptance:
-  - go test ./... passes
-  - docs/planmark-language.md exists
-```
-```
+This authoring model improves three things at once.
 
-### Task with deps + commands
-```md
-```planmark
-id: bead-010
-title: Add plan doctor checks
-deps: [bead-001]
-commands:
-  - go test ./...
-acceptance:
-  - Doctor reports missing IDs as error in strict mode
-  - Doctor preserves unknown keys in tolerant mode
-```
-```
+Tracker projection:
 
-### Context pin
-```md
-```planmark
-kind: context_pin
-id: pin-constraints
-file: PLAN.md
-lines: [88, 122]
-label: Invariants section
-```
-```
+- a task can project not just title and metadata, but also scoped paragraphs, steps, and evidence blocks
+- the same semantic task can render into Beads, GitHub Issues, Linear, or Jira without changing the source authoring style
+
+Agent context:
+
+- `context`, `open`, `explain`, and `handoff` can return the actual task scope, not just one checklist line
+- rationale, steps, rollback notes, and scoped evidence become available without ad hoc scraping
+
+Human authoring:
+
+- plans stay readable as Markdown
+- authors do not need to learn a second fenced DSL
+- richer detail can be added incrementally without breaking deterministic extraction
 
 ---
 
-## 9. FAQ
+## 9. Summary
 
-### “Is PlanMark a compiler language?”
-No. It’s a deterministic annotation format for project plans.
+The intended contract is:
 
-### “Can I keep my PLAN.md messy?”
-Yes. Only `planmark` blocks are actionable.
+- write normal Markdown
+- define tasks with checkboxes or headings
+- keep metadata inside task scope
+- use nested checklists as steps by default
+- let free-form Markdown remain human-readable but context-preserving
 
-### “Do I have to use every field?”
-No. Use the minimum fields needed for your workflow; strict mode determines what is required.
-
-### “How do we avoid guessing?”
-By requiring explicit blocks for anything that becomes automation input.
+PlanMark should parse Markdown broadly enough to preserve structure, but derive semantics narrowly enough to stay deterministic.

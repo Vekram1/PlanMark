@@ -5,6 +5,7 @@
 - Version: `v0.2-draft`
 - Scope: Canonical contract for PLAN authoring + deterministic extraction behavior
 - Canonical source: `PLAN.md`
+- Note: this draft includes the intended richer Markdown authoring contract; current implementation is narrower until parser, semantic-derivation, and context code catch up.
 
 ## Purpose
 
@@ -13,18 +14,20 @@ PlanMark defines a deterministic, lossless pipeline from `PLAN.md` into machine-
 ## Core Model
 
 - Canonical source of truth: `PLAN.md`.
-- Extraction model: tolerant parse into a two-layer IR.
-- Layer 1: Source IR captures verbatim slices, spans, hashes, and coverage.
-- Layer 2: Semantic IR deterministically derives task graph semantics from Source IR.
+- Extraction model: tolerant parse into Markdown-derived planning structure.
+- Source capture preserves verbatim slices, spans, hashes, and coverage.
+- Semantic derivation promotes only policy-approved task shapes and metadata into machine-actionable task graph semantics.
+- Free-form Markdown remains preserved even when it is not promoted into typed task semantics.
 - Strictness boundary: strict execution gating is command-boundary behavior, not global parse behavior.
 - Semantic derivation is policy-versioned (`semantic_derivation/v0.1`) and independent from IR schema versioning.
 
 ## Authoring Primitives
 
-PlanMark authoring supports mixed Markdown content and task metadata lines.
+PlanMark authoring supports mixed Markdown content, task-shaped blocks, and line-oriented metadata.
 
-- Task-like checklist entries: Markdown checkboxes (`- [ ]`, `- [x]`) remain source-visible and preserved.
-- Metadata annotations: line-oriented `@key value` forms attached deterministically.
+- Task-shaped checklist entries: Markdown checkboxes (`- [ ]`, `- [x]`) remain source-visible and preserved.
+- Task-shaped section headings may define task scope when paired with task metadata or an explicit semantic promotion rule.
+- Metadata annotations use line-oriented `@key value` forms attached deterministically to a task or section scope.
 - Canonical metadata keys include (initial set):
   - `@id`
   - `@horizon`
@@ -38,14 +41,67 @@ PlanMark authoring supports mixed Markdown content and task metadata lines.
   - `@assume`
   - `@invariant`
 - Unknown metadata keys are retained as opaque annotations unless strict policy explicitly rejects them.
+- Nested checklist items may exist inside a task scope and are preserved as ordered execution detail unless a semantic policy explicitly promotes them to child tasks.
 - Mixed content (prose, tables, diagrams, code fences, partial/broken sections) is preserved and never silently dropped.
+
+Implementation note:
+
+- The current parser implementation still recognizes a narrower set of source nodes and uses a simpler metadata attachment rule.
+- This section defines the intended authoring contract for the richer Markdown model, not a claim that every rule below is already implemented in the current binary.
+
+## Task Shapes And Scope
+
+The canonical authoring model recognizes two task shapes.
+
+- Checkbox task: a checklist item plus directly owned metadata and child content.
+- Heading task: a heading promoted by task metadata or explicit semantic rule, plus descendant content within the heading boundary.
+
+Task scope rules:
+
+- Checkbox task scope begins at the checkbox line and includes directly attached metadata plus nested child blocks that belong to the item.
+- Heading task scope begins at the heading and extends until the next heading of the same or higher level.
+- Free-form blocks inside task scope remain part of task provenance/context even when they are not promoted into typed semantic fields.
+- The same task scope may contain paragraphs, tables, blockquotes, code fences, examples, and nested lists without losing deterministic ownership.
+
+This model keeps Markdown authoring natural while giving context, sync, and explain flows a larger bounded unit than a single line.
+
+## Metadata Ownership Contract
+
+Metadata ownership is scope-based, not purely line-adjacent.
+
+- Metadata directly under a checkbox task belongs to that checkbox task.
+- Metadata directly under a heading belongs to that heading task or section scope.
+- Metadata inside nested list indentation belongs to the nested list item it is structurally scoped under.
+- Metadata before the first attachable task/section remains unattached and must be preserved with a deterministic diagnostic.
+- Ambiguous metadata may only be attached when policy-defined ownership rules resolve it deterministically; otherwise it remains unattached.
+
+Expected merge behavior:
+
+- Repeatable keys append in stable source order: `@deps`, `@accept`, `@touches`.
+- Scalar keys use deterministic last-wins behavior with overwrite diagnostics when policy requires them: `@horizon`, `@why`, and similar single-value fields.
+
+The contract for authors is simple: keep machine-relevant metadata inside the task scope it belongs to.
+
+## Nested Checklist Contract
+
+Nested checklist items provide execution detail without forcing every step to become an independent tracker item.
+
+- A nested checklist inside a task scope is interpreted as ordered execution detail by default.
+- Nested checklist items are preserved as structured scoped content for context retrieval and issue rendering.
+- A future semantic policy may explicitly promote certain nested checklist shapes into child tasks, but that promotion must be opt-in and versioned.
+- Top-level task semantics must not depend on heuristic interpretation of arbitrary nested prose.
+
+This default prevents accidental task explosion while still preserving enough structure for richer context packets and tracker rendering.
 
 ## Planning-first authoring
 
 Planning-first authoring keeps PLAN writing cheap while preserving deterministic extraction.
 
-- Only checklist + optional @id/@horizon required.
+- Only a task shape plus optional `@id`/`@horizon` are required.
+- A task shape may be either a checklist item or a heading with task metadata or explicit promotion rule.
 - Additional metadata (`@accept`, `@deps`, `@touches`, `@why`, and others) can be added incrementally as scope stabilizes.
+- Free-form prose and evidence blocks may live inside task scope without losing provenance.
+- Nested checklist items should be treated as steps by default, not forced child tasks.
 - Missing metadata for `next`/`later` work is surfaced as diagnostics, not parse failures.
 - Strict execution gating still applies only when generating L0 execution packets for `horizon=now`.
 
@@ -57,6 +113,7 @@ Tolerance is a first-class requirement:
 - Every source line must be accounted for as either interpreted slice coverage or explicit opaque/uninterpreted coverage.
 - Metadata that cannot be attached deterministically must be preserved in unattached metadata with stable diagnostics.
 - Unknown constructs are preserved verbatim; they are not discarded.
+- Richer Markdown structure may be captured without requiring every block type to receive task semantics.
 - Canonical commands (`compile`, `doctor`, `context`, `open`, `explain`, `sync`) must remain deterministic and offline-safe.
 
 ## Determinism Policy v0.1
@@ -82,7 +139,7 @@ This policy defines what "deterministic" means for PlanMark compile and read pat
   - Symlink resolution policy is explicit and versioned per command surface.
 - Traversal/attachment ordering:
   - Source node traversal order follows source order.
-  - Metadata attachment resolves using deterministic nearest-node rules; tie handling is explicit and stable.
+  - Metadata attachment resolves using deterministic scope-ownership rules; tie handling and ambiguity retention are explicit and stable.
 - Stable source identity:
   - `node_ref` is content-addressed from plan scope + node kind + canonical slice digest + deterministic occurrence index.
   - Line ranges remain provenance, not identity.
@@ -161,6 +218,7 @@ Notes:
 - Source of semantic derivation rules: `docs/specs/semantic-derivation-v0.1.md`
 - Policy identifier: `semantic_derivation/v0.1`
 - Contract: identical Source IR bytes + identical semantic policy version produce byte-stable Semantic IR.
+- The semantic policy defines deterministic promotion for checkbox tasks, heading tasks, scope-owned metadata, nested checklist steps, and scoped evidence retention.
 
 ## Machine Protocol Contract (v0.1)
 
