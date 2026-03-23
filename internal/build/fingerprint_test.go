@@ -34,14 +34,14 @@ func TestTaskSemanticFingerprintDeterminism(t *testing.T) {
 
 	fpA := TaskSemanticFingerprint(base)
 	fpB := TaskSemanticFingerprint(reordered)
-	if fpA != fpB {
-		t.Fatalf("expected deterministic fingerprint for equivalent semantics, got %q vs %q", fpA, fpB)
+	if fpA == fpB {
+		t.Fatalf("expected fingerprint change when ordered step/evidence semantics change")
 	}
 
 	changed := reordered
 	changed.Steps = append(changed.Steps, ir.TaskStep{Title: "review output"})
 	fpC := TaskSemanticFingerprint(changed)
-	if fpA == fpC {
+	if fpB == fpC {
 		t.Fatalf("expected fingerprint change when semantic steps change")
 	}
 }

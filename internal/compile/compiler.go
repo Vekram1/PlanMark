@@ -188,7 +188,7 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 	}, nil
 }
 
-func isTaskCandidateNode(idx int, node Node, attached []AttachedNodeMetadata, parentByIndex map[int]int, promotedHeadingByIndex map[int]struct{}) bool {
+func isTaskCandidateNode(idx int, node Node, attached []AttachedNodeMetadata, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) bool {
 	if strings.TrimSpace(node.Text) == "" {
 		return false
 	}
@@ -223,8 +223,8 @@ func hasKnownMetadataValue(entries []MetadataEntry) bool {
 	return false
 }
 
-func structuralParentIndexes(nodes []Node) map[int]int {
-	parentByIndex := make(map[int]int, len(nodes))
+func structuralParentIndexes(nodes []Node) []int {
+	parentByIndex := make([]int, len(nodes))
 	for childIdx, child := range nodes {
 		bestIdx := -1
 		bestSpan := 0
@@ -258,9 +258,12 @@ func nodeOwnsNode(parent Node, child Node) bool {
 	}
 }
 
-func isStepCheckbox(idx int, attached []AttachedNodeMetadata, parentByIndex map[int]int, promotedHeadingByIndex map[int]struct{}) bool {
-	parentIdx, ok := parentByIndex[idx]
-	if !ok || parentIdx < 0 {
+func isStepCheckbox(idx int, attached []AttachedNodeMetadata, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) bool {
+	if idx < 0 || idx >= len(parentByIndex) {
+		return false
+	}
+	parentIdx := parentByIndex[idx]
+	if parentIdx < 0 {
 		return false
 	}
 	if attached[parentIdx].Node.Kind == NodeKindCheckbox {
@@ -272,7 +275,7 @@ func isStepCheckbox(idx int, attached []AttachedNodeMetadata, parentByIndex map[
 	return false
 }
 
-func descendantSteps(taskIdx int, attached []AttachedNodeMetadata, compiled []CompiledNode, nodeRefs []string, parentByIndex map[int]int, promotedHeadingByIndex map[int]struct{}) []ir.TaskStep {
+func descendantSteps(taskIdx int, attached []AttachedNodeMetadata, compiled []CompiledNode, nodeRefs []string, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) []ir.TaskStep {
 	steps := make([]ir.TaskStep, 0)
 	for idx, parentIdx := range parentByIndex {
 		if parentIdx != taskIdx {
@@ -294,7 +297,7 @@ func descendantSteps(taskIdx int, attached []AttachedNodeMetadata, compiled []Co
 	return steps
 }
 
-func descendantEvidenceNodeRefs(taskIdx int, attached []AttachedNodeMetadata, nodeRefs []string, parentByIndex map[int]int, promotedHeadingByIndex map[int]struct{}) []string {
+func descendantEvidenceNodeRefs(taskIdx int, attached []AttachedNodeMetadata, nodeRefs []string, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) []string {
 	refs := make([]string, 0)
 	for idx, parentIdx := range parentByIndex {
 		if parentIdx != taskIdx {

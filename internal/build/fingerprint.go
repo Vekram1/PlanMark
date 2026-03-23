@@ -27,8 +27,8 @@ func TaskSemanticFingerprint(task ir.Task) string {
 		Horizon:          strings.ToLower(strings.TrimSpace(task.Horizon)),
 		Deps:             normalizeValues(task.Deps),
 		Accept:           normalizeValues(task.Accept),
-		StepTitles:       normalizeStepTitles(task.Steps),
-		EvidenceNodeRefs: normalizeValues(task.EvidenceNodeRefs),
+		StepTitles:       orderedStepTitles(task.Steps),
+		EvidenceNodeRefs: orderedValues(task.EvidenceNodeRefs),
 	}
 
 	data, _ := json.Marshal(payload)
@@ -49,15 +49,26 @@ func normalizeValues(values []string) []string {
 	return normalized
 }
 
-func normalizeStepTitles(steps []ir.TaskStep) []string {
-	normalized := make([]string, 0, len(steps))
+func orderedStepTitles(steps []ir.TaskStep) []string {
+	ordered := make([]string, 0, len(steps))
 	for _, step := range steps {
 		trimmed := strings.TrimSpace(step.Title)
 		if trimmed == "" {
 			continue
 		}
-		normalized = append(normalized, trimmed)
+		ordered = append(ordered, trimmed)
 	}
-	sort.Strings(normalized)
-	return normalized
+	return ordered
+}
+
+func orderedValues(values []string) []string {
+	ordered := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		ordered = append(ordered, trimmed)
+	}
+	return ordered
 }
