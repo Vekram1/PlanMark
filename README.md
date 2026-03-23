@@ -1,315 +1,295 @@
 # PlanMark
 
-PlanMark is a deterministic, lossless plan toolchain for `PLAN.md`.
+PlanMark turns a `PLAN.md` file into deterministic, machine-usable planning artifacts.
 
-It compiles mixed-content plans (human + LLM authored) into machine-actionable IR, emits diagnostics and context packets, and supports tracker projection workflows without making the tracker canonical.
+If you want an agent to work from a plan without making the tracker or the model output canonical, this is the tool:
 
-## How It Works (Visual)
+- you write `PLAN.md`
+- PlanMark compiles it into structured IR
+- PlanMark checks readiness and blockers
+- PlanMark produces task context and handoff packets for agents
+- PlanMark can project that same plan into a tracker without making the tracker the source of truth
 
-```text
-PLAN.md (canonical, mixed markdown)
-    |
-    +--> plan compile -----------> plan.json (lossless IR + semantic IR)
-    |                                 |
-    |                                 +--> plan changes (deterministic semantic diff)
-    |
-    +--> plan doctor ------------> diagnostics/readiness (json/text/rich)
-    |
-    +--> plan context/open/explain
-    |       |
-    |       +--> L0/L1/L2 context packets + exact source page-fault retrieval
-    |
-    +--> plan sync beads --------> deterministic tracker projection/reconcile
-    |
-    +--> plan ai ... ------------> optional assistive drafts/summaries (non-canonical)
-```
+`PLAN.md` stays canonical.
 
-## What It Can Do Today
+## What A New User Should Expect
 
-- Deterministic compile from plan markdown to structured IR (`plan compile`).
-- Tolerant diagnostics and readiness checks (`plan doctor`) with machine-readable output.
-- Provenance-backed context retrieval (`plan context`, `plan open`, `plan explain`).
-- Deterministic change reporting (`plan changes`).
-- Beads reconcile/sync workflow with dry-run support (`plan sync beads`).
-- Deterministic handoff packet generation for task-focused sessions (`plan handoff`).
-- Non-canonical AI assistive commands (`plan ai ...`) for faster authoring/review support.
+You do not need to learn a separate DSL.
+You write normal Markdown with a small amount of structured metadata.
 
-## Quickstart
+The basic workflow is:
+
+1. initialize PlanMark in your repo
+2. write a small `PLAN.md`
+3. run `plan compile`
+4. run `plan doctor`
+5. ask for task context with `plan context` or `plan handoff`
+6. optionally preview tracker sync with `plan sync --dry-run`
+
+If those steps work, your agent already has something solid to operate on.
+
+## Install
+
+From a source checkout:
 
 ```bash
-# 0) Install the CLI (from source checkout)
 go build -o ./bin/plan ./cmd/plan
-./bin/plan version --format json
 export PATH="$PWD/bin:$PATH"
-
-# 1) Initialize current project once
-./bin/plan init --dir . --format text
-
-# 2) Capability handshake
-plan version --format json
-
-# 3) Compile plan into IR
-plan compile --plan PLAN.md --out .planmark/tmp/plan.json
-
-# 4) Diagnose readiness/tolerance issues
-plan doctor --plan PLAN.md --profile loose --format rich
-
-# 5) Get execution context for a task
-plan context <task-id> --plan PLAN.md --level L0 --format json
-
-# 6) Page-fault into exact source when needed
-plan open <task-id-or-node-ref> --plan PLAN.md --format json
-plan explain <task-id> --plan PLAN.md --format rich
-```
-
-## Standalone Install (curl)
-
-Install PlanMark globally with dependency checks (macOS/Linux):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
-```
-
-Optional installer environment variables:
-
-```bash
-# install location (default: ~/.local/bin)
-PLANMARK_INSTALL_DIR="$HOME/bin"
-
-# repo/ref override
-PLANMARK_REPO="Vekram1/PlanMark"
-PLANMARK_CHANNEL="stable" # default; uses latest GitHub release tag
-PLANMARK_CHANNEL="edge"   # uses master
-PLANMARK_REF="v0.1.0"     # pin exact ref/tag/branch
-
-# disable automatic dependency install attempts
-PLANMARK_AUTO_INSTALL_DEPS=0
-```
-
-After install, initialize any project once:
-
-```bash
-cd /path/to/your/project
-plan init --dir . --format text
-```
-
-## Updating PlanMark
-
-Stable update (recommended):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
-```
-
-Edge update (latest `master`):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | PLANMARK_CHANNEL=edge bash
-```
-
-Pinned update:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | PLANMARK_REF=v0.1.0 bash
-```
-
-Local updater wrapper (when running from a checkout):
-
-```bash
-./scripts/update.sh
-```
-
-## Startup Guide
-
-Use this when bringing up PlanMark in a new environment.
-
-### 1) Install PlanMark
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
-```
-
-### 2) Confirm the CLI is available
-
-```bash
 plan version --format json
 ```
 
-If `plan` is not found, add the installer output path to your shell profile, for example:
+Global install on macOS/Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
+plan version --format json
+```
+
+If `plan` is not found after install, add the installer path to your shell:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### 3) Initialize a project once
+## First-Time Quickstart
+
+Initialize the current repo once:
 
 ```bash
-cd /path/to/your/project
 plan init --dir . --format text
 ```
 
-This creates project-local PlanMark state (`.planmark/`) and optional starter files if missing.
-It also creates or updates a managed block in `AGENTS.md` documenting available `plan` commands for coding agents.
+This creates local PlanMark state under `.planmark/` and, if missing, starter files such as `PLAN.md` and `.planmark.yaml`.
 
-### `plan init` creates
+Now replace `PLAN.md` with something small and real.
 
-- `.planmark/state_version.json`
-- `.planmark/build/`, `.planmark/sync/`
-- `.planmark/cache/context/`
-- `.planmark/cas/sha256/`
-- `.planmark/journal/sync/`
-- `.planmark/locks/`
-- `PLAN.md` template (if missing, unless `--no-plan-template`)
-- `.planmark.yaml` template (if missing, unless `--no-config`)
-- managed `AGENTS.md` command block
+## Write Your First `PLAN.md`
 
-Managed AGENTS block markers:
+This is a good starting example:
 
 ```md
-<!-- planmark:init:start -->
-...managed content...
-<!-- planmark:init:end -->
+# PLAN
+
+## API rollout
+
+### Add migration
+@id api.migrate
+@horizon now
+@deps api.schema
+@accept cmd:go test ./...
+@rollback restore snapshot and revert migration file
+
+We need additive rollout because older workers may still read legacy columns.
+
+- [ ] Write additive migration
+- [ ] Verify rollback path
+- [ ] Run local validation
+
+### Validate schema assumptions
+@id api.schema
+@horizon next
+
+Confirm the new columns are additive and safe for older readers.
 ```
 
-If markers already exist, only that managed block is replaced.
-If markers do not exist, the block is appended and existing AGENTS content is preserved.
+What matters here:
 
-### 4) Run the deterministic core workflow
+- each real task has a clear title
+- tasks that will be referenced or synced get an explicit `@id`
+- work you want agents to execute now gets `@horizon now`
+- execution-ready tasks should have at least one `@accept`
+- nested checklist items become ordered steps for the parent task
+- free-form prose stays useful context for the agent
+
+You can also use a compact checkbox task style:
+
+```md
+- [ ] Add migration
+  @id api.migrate
+  @horizon now
+  @deps api.schema
+  @accept cmd:go test ./...
+```
+
+Use heading tasks when you want rationale, tables, examples, or steps under the task.
+Give a heading task explicit task metadata such as `@id` or `@horizon`; a bare heading is just section structure.
+
+## Run The Core Workflow
+
+Compile the plan:
 
 ```bash
+plan compile --plan PLAN.md --out .planmark/tmp/plan.json
+```
+
+This gives you deterministic IR derived from `PLAN.md`.
+
+Check for blockers and readiness problems:
+
+```bash
+plan doctor --plan PLAN.md --profile loose --format rich
+```
+
+For stricter execution gating on `@horizon now` work:
+
+```bash
+plan doctor --plan PLAN.md --profile exec --format rich
+```
+
+List tasks:
+
+```bash
+plan query --plan PLAN.md --format text
+```
+
+You should now be able to see your tasks, IDs, and readiness state.
+
+## Get Agent-Usable Task Context
+
+For an agent, the most useful commands are usually these:
+
+Task context packet:
+
+```bash
+plan context api.migrate --plan PLAN.md --level L0 --format json
+```
+
+Exact source lookup:
+
+```bash
+plan open api.migrate --plan PLAN.md --format json
+```
+
+Why a task looks the way it does:
+
+```bash
+plan explain api.migrate --plan PLAN.md --format rich
+```
+
+Task handoff packet:
+
+```bash
+plan handoff api.migrate --plan PLAN.md --format json
+```
+
+These are the outputs an agent should usually consume first, rather than scraping `PLAN.md` directly.
+
+Recommended escalation path:
+
+1. `plan context <id> --level L0`
+2. `plan open <id>`
+3. `plan explain <id>`
+4. `plan context <id> --level L1`
+5. `plan context <id> --level L2`
+
+That keeps agent context small while preserving deterministic traceability back to source.
+
+## Preview Tracker Sync
+
+PlanMark can project tasks into a tracker, but the tracker is not canonical.
+`PLAN.md` remains the source of truth.
+
+Dry-run Beads sync:
+
+```bash
+plan sync beads --plan PLAN.md --dry-run --format json
+```
+
+Dry-run GitHub proof adapter:
+
+```bash
+plan sync github --plan PLAN.md --dry-run --format json
+```
+
+You can also select the adapter and render profile explicitly:
+
+```bash
+plan sync --plan PLAN.md --adapter github --profile compact --dry-run --format json
+```
+
+Current built-in render profiles:
+
+- `default`
+- `compact`
+- `agentic`
+- `handoff`
+
+Current proven adapters:
+
+- `beads`
+- `github`
+
+## Optional Repo Config
+
+You can set default tracker selection in `.planmark.yaml`:
+
+```yaml
+tracker:
+  adapter: beads
+  profile: default
+```
+
+Then `plan sync --plan PLAN.md --dry-run --format json` will use those defaults.
+
+## What Makes A Good Plan For Agents
+
+If you want good results from agents, write plans with these habits:
+
+- give important tasks explicit `@id`s
+- keep rationale near the task, not in a distant section
+- add `@accept` before asking an agent to execute `@horizon now` work
+- use nested checklists for steps
+- keep risks and rollback notes inside the task scope
+- prefer a few well-scoped tasks over a long flat checklist with no metadata
+
+The goal is not to encode everything.
+The goal is to make each task a bounded unit of work with enough nearby context to act on safely.
+
+## Canonical vs Non-Canonical
+
+Canonical deterministic commands:
+
+- `plan compile`
+- `plan doctor`
+- `plan context`
+- `plan open`
+- `plan explain`
+- `plan handoff`
+- `plan sync`
+
+These are intended to remain deterministic and offline-safe.
+
+AI helpers are optional and non-canonical:
+
+- `plan ai ...`
+
+Use them as assistive tooling, not as the source of truth.
+
+## Common Commands
+
+```bash
+plan version --format json
+plan init --dir . --format text
 plan compile --plan PLAN.md --out .planmark/tmp/plan.json
 plan doctor --plan PLAN.md --profile loose --format rich
-plan changes --plan PLAN.md --format json
-plan sync beads --plan PLAN.md --dry-run --format json
+plan query --plan PLAN.md --format text
+plan context <id> --plan PLAN.md --level L0 --format json
+plan open <id|node-ref> --plan PLAN.md --format json
+plan explain <id> --plan PLAN.md --format rich
+plan handoff <id|node-ref> --plan PLAN.md --format json
+plan sync [beads|github] --plan PLAN.md --dry-run --format json
 ```
-
-### 5) Optional AI workflow
-
-```bash
-plan ai apply-fix --plan PLAN.md --approve --format json
-```
-
-## Core Commands
-
-- `plan version --format text|json`
-- `plan init [--dir <path>] [--plan <path>] [--state-dir <path>] [--config <path>] [--no-plan-template] [--no-config] [--format text|json]`
-- `plan compile --plan <path> [--out <path>] [--state-dir <path>]`
-- `plan doctor --plan <path> [--profile loose|build|exec] [--format text|rich|json]`
-- `plan context <id> --plan <path> --level L0|L1|L2 [--format text|json]`
-- `plan open <id|node-ref> --plan <path> [--format text|json]`
-- `plan explain <id> --plan <path> [--format text|rich|json]`
-- `plan handoff <id|node-ref> --plan <path> [--format text|json]`
-- `plan query --plan <path> [--horizon now|next|later] [--ready|--blocked] [--format text|json]`
-- `plan sync beads --plan <path> [--dry-run] [--format text|json]`
-- `plan changes --plan <path> [--format text|json]`
-
-## AI Helper Commands (Non-Canonical)
-
-`plan ai` commands are optional helpers and are not part of the canonical deterministic compile/sync path.
-
-### Suggest Acceptance Criteria
-
-```bash
-plan ai suggest-accept <id> --plan <path> [--format text|json]
-```
-
-Returns deterministic acceptance suggestion lines derived from explain blockers.
-
-### Summarize Dependency Closure
-
-```bash
-plan ai summarize-closure <id> --plan <path> [--format text|json]
-```
-
-Returns a dependency closure summary with source pointers (`source_path`, line range, `node_ref`, `slice_hash`).
-
-### Draft Granular Beads
-
-```bash
-plan ai draft-beads --plan <path> [--horizon all|now|next|later] [--limit N] [--format text|json]
-```
-
-Returns deterministic parent/child draft suggestions with:
-- `draft_level` (`parent` or `child`)
-- `parent_task_id` (for child rows)
-- `child_order_index` (stable child ordering)
-
-### Apply Fix With Configured/Connected Provider
-
-```bash
-# Repo-local config in .planmark.yaml
-cat > .planmark.yaml <<'YAML'
-ai:
-  provider: deterministic_mock
-  # provider: openai_compatible
-  # model: gpt-4o-mini
-  # base_url: https://api.openai.com/v1
-  # api_key_env: OPENAI_API_KEY
-  # timeout_seconds: 30
-YAML
-
-plan ai apply-fix --plan PLAN.md --approve --format json
-```
-
-You can override provider settings per invocation:
-
-```bash
-plan ai apply-fix --plan PLAN.md --approve \
-  --provider deterministic_mock \
-  --model gpt-4o-mini \
-  --format json
-```
-
-## Typical Agent Workflow
-
-```bash
-# deterministic core loop
-plan compile --plan PLAN.md --out .planmark/tmp/plan.json
-plan doctor --plan PLAN.md --profile build --format json
-plan changes --plan PLAN.md --format json
-plan sync beads --plan PLAN.md --dry-run --format json
-```
-
-```text
-Agent loop (deterministic core):
-
-compile --> doctor --> changes --> sync --dry-run --> (review) --> sync apply
-   |          |           |              |
-   |          |           |              +--> tracker operation preview
-   |          |           +--> task-level semantic drift
-   |          +--> blockers/readiness diagnostics
-   +--> canonical IR baseline
-
-Escalate context only when needed:
-context L0 --> open/explain --> context L1 --> context L2
-```
-
-## Context Minimization Workflow
-
-Use an escalation ladder to save context:
-
-1. Start with task-only context (`L0`):
-   - `plan context <task-id> --plan PLAN.md --level L0 --format json`
-2. Escalate to `L1` only when pin evidence is needed.
-3. Escalate to `L2` only when dependency closure is needed.
-4. Use `plan open` / `plan explain` for targeted retrieval before broad escalation.
-5. Fall back to full `PLAN.md` only when ambiguity remains.
-
-This keeps routine execution sessions small while preserving deterministic traceability to source.
-
-## Determinism Notes
-
-- `PLAN.md` is canonical.
-- Canonical path commands (`compile`, `doctor`, `context`, `open`, `explain`, `sync`) are deterministic/offline-safe by contract.
-- AI helpers are explicitly non-canonical and should be treated as assistive output only.
 
 ## Current Limitations
 
-- Tracker/runtime coordination depends on explicit sync/reconcile calls; it is not implicit background state.
-- Some advanced milestones in `PLAN.md` are intentionally staged and not fully implemented yet.
-- AI helper output is not canonical truth; users must review before applying changes.
+- `PLAN.md` is the canonical source, so tracker changes are projection/runtime state, not plan edits
+- only `beads` and `github` are currently proven adapters
+- richer Markdown support is implemented conservatively; PlanMark still promotes only a narrow set of planning shapes into semantics
+- AI helper output is non-canonical and should be reviewed before applying anything
 
 ## Development
+
+Run the test suite:
 
 ```bash
 go test ./...
