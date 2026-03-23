@@ -72,6 +72,7 @@ The reconcile policy is intentionally tracker-neutral even when the first implem
 
 - Semantic task identity, provenance, readiness metadata, and scoped evidence come from PLAN/IR.
 - A tracker-neutral `TaskProjectionV2` sits between Semantic IR and adapter rendering so adapters consume canonical task semantics rather than Beads-specific fields.
+- Each adapter also exposes deterministic `TrackerCapabilities` so future rendering/template policy can validate backend support without hardcoding tracker assumptions into the compiler.
 - Tracker adapters choose how to render that semantic task into the target system's available fields.
 - Runtime overlays remain tracker-owned regardless of rendering shape.
 - The current Beads projection payload schema is `v0.2` and is built from that projection layer, carrying the subset of adapter-neutral task fields that Beads currently renders:
@@ -81,6 +82,17 @@ The reconcile policy is intentionally tracker-neutral even when the first implem
   - ordered `evidence_node_refs`
   - provenance/source mapping and acceptance digest
 - Sync planning hashes the full canonical `TaskProjectionV2`, including reserved projection fields such as structured `sections` and evidence `kind`, so semantic projection changes are still detected before every adapter renders every field.
+
+Current capability descriptor categories:
+
+- title support
+- body text mode (`unsupported` | `plain` | `markdown`)
+- ordered step/checklist support (`unsupported` | `rendered` | `native`)
+- child-work support (`unsupported` | `rendered` | `native`)
+- custom-field support (`unsupported` | `rendered` | `native`)
+- safe runtime overlay support (`status`, `assignee`, `priority`)
+
+The descriptor is deterministic adapter metadata. It does not change the canonical task projection or reconcile operation classes.
 
 Illustrative target mapping for the same semantic task:
 

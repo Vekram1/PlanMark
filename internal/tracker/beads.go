@@ -87,6 +87,23 @@ func NewBeadsAdapter() *BeadsAdapter {
 	}
 }
 
+func (a *BeadsAdapter) Capabilities() TrackerCapabilities {
+	return TrackerCapabilities{
+		AdapterName:  "beads",
+		Title:        true,
+		Body:         TextMarkdown,
+		Steps:        CapabilityRendered,
+		ChildWork:    CapabilityUnsupported,
+		CustomFields: CapabilityUnsupported,
+		RuntimeOverlays: RuntimeOverlayCapabilities{
+			Status:   true,
+			Assignee: true,
+			Priority: true,
+		},
+		ProjectionSchema: ProjectionSchemaVersionV02,
+	}
+}
+
 func (a *BeadsAdapter) SeedFromSyncManifest(manifest BeadsSyncManifest) {
 	for _, entry := range manifest.Entries {
 		id := strings.TrimSpace(entry.ID)

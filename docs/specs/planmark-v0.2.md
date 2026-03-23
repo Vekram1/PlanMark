@@ -214,6 +214,7 @@ Notes:
 - Policy identifier: `tracker_reconcile/v0.1`
 - Contract: PLAN remains canonical for structure/intent; tracker runtime fields are merged under explicit safe-pull rules.
 - Tracker rendering now flows through a tracker-neutral task projection layer before adapter-specific payloads are built.
+- Tracker adapters expose deterministic capability descriptors so rendering/template policy can validate backend support for body text, steps, child work, custom fields, and safe runtime overlays.
 - Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
 - Sync planning hashes the full canonical tracker-neutral projection, so reserved fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
 

@@ -53,6 +53,43 @@ type TaskProjectionV2 struct {
 // TaskProjection remains the adapter boundary name while the richer v2 shape settles.
 type TaskProjection = TaskProjectionV2
 
+type CapabilitySupport string
+
+const (
+	CapabilityUnsupported CapabilitySupport = "unsupported"
+	CapabilityRendered    CapabilitySupport = "rendered"
+	CapabilityNative      CapabilitySupport = "native"
+)
+
+type TextCapability string
+
+const (
+	TextUnsupported TextCapability = "unsupported"
+	TextPlain       TextCapability = "plain"
+	TextMarkdown    TextCapability = "markdown"
+)
+
+type RuntimeOverlayCapabilities struct {
+	Status   bool `json:"status"`
+	Assignee bool `json:"assignee"`
+	Priority bool `json:"priority"`
+}
+
+// TrackerCapabilities declares the deterministic shape a tracker adapter can
+// currently represent. Renderers/templates use this to validate whether a
+// projection can be expressed directly, must be collapsed into body text, or is
+// unsupported by the backend.
+type TrackerCapabilities struct {
+	AdapterName      string                     `json:"adapter_name"`
+	Title            bool                       `json:"title"`
+	Body             TextCapability             `json:"body"`
+	Steps            CapabilitySupport          `json:"steps"`
+	ChildWork        CapabilitySupport          `json:"child_work"`
+	CustomFields     CapabilitySupport          `json:"custom_fields"`
+	RuntimeOverlays  RuntimeOverlayCapabilities `json:"runtime_overlays"`
+	ProjectionSchema string                     `json:"projection_schema,omitempty"`
+}
+
 type canonicalTaskProjection struct {
 	ID                string                   `json:"id"`
 	Title             string                   `json:"title,omitempty"`
@@ -189,4 +226,5 @@ type PushResult struct {
 type TrackerAdapter interface {
 	PushTask(ctx context.Context, task TaskProjection) (PushResult, error)
 	PullRuntimeFields(ctx context.Context, ids []string) (map[string]RuntimeFields, error)
+	Capabilities() TrackerCapabilities
 }
