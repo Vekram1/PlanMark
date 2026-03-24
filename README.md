@@ -245,6 +245,73 @@ If you want good results from agents, write plans with these habits:
 The goal is not to encode everything.
 The goal is to make each task a bounded unit of work with enough nearby context to act on safely.
 
+## Iterating On An Existing `PLAN.md` With An LLM
+
+Once you already have a full `PLAN.md`, a useful next step is to ask an LLM to review it and propose improvements.
+
+The best version of that prompt is not "rewrite my plan" in the abstract.
+It should ask for:
+
+- architectural improvements
+- feature additions or removals
+- sequencing changes
+- robustness, reliability, and performance improvements
+- explicit rationale for each recommendation
+- git-diff-style edits relative to the original plan
+
+Use a prompt like this:
+
+```text
+Carefully review this entire plan for me and come up with your best revisions in terms of better architecture, new features, changed features, etc. to make it better, more robust/reliable, more performant, more compelling/useful, etc.
+
+For each proposed change, give me your detailed analysis and rationale/justification for why it would make the project better along with the git-diff style changes relative to the original markdown plan shown below:
+
+<PASTE YOUR EXISTING COMPLETE PLAN HERE>
+```
+
+If you want the model to preserve PlanMark-compatible task structure more explicitly, use this stronger version:
+
+```text
+Carefully review this entire plan for me and come up with your best revisions in terms of better architecture, new features, changed features, sequencing changes, reliability improvements, performance improvements, and anything else that would make the project more compelling and more useful.
+
+For each proposed change:
+
+1. Explain the recommendation clearly.
+2. Give detailed rationale for why it improves the project.
+3. Call out any tradeoffs, risks, or scope implications.
+4. Show the exact git-diff style markdown changes relative to the original plan.
+
+When proposing plan edits, preserve PlanMark-style task structure:
+- use ordinary Markdown
+- use heading-based tasks for substantial work
+- keep explicit `@id` and `@horizon`
+- use `@deps` when prerequisites matter
+- keep rationale, risks, rollback notes, and assumptions inside the relevant task section
+- use nested checklist items for execution steps
+- do not invent tracker-specific syntax
+- do not leave important implementation work only in prose
+
+Here is the full original plan:
+
+<PASTE YOUR EXISTING COMPLETE PLAN HERE>
+```
+
+What to do with the result:
+
+- keep the original `PLAN.md` open beside the model output
+- review the rationale before accepting any diff
+- prefer edits that turn vague prose into explicit tasks
+- reject recommendations that remove necessary implementation detail
+- re-run `plan compile` and `plan doctor` after you update the plan
+
+Recommended follow-up after applying accepted revisions:
+
+```bash
+plan compile --plan PLAN.md --out .planmark/tmp/plan.json
+plan doctor --plan PLAN.md --profile build --format rich
+plan handoff <id> --plan PLAN.md --format json
+```
+
 ## Canonical vs Non-Canonical
 
 Canonical deterministic commands:
@@ -294,3 +361,110 @@ Run the test suite:
 ```bash
 go test ./...
 ```
+
+
+
+
+
+
+Prompts You Should Absolutely Run/adapt for your project in LLM of choice:
+
+For PLAN.md Creation:
+
+I want you to generate a complete `PLAN.md` for a software project
+  that will be executed by coding agents.
+
+  Output only the plan in Markdown. Do not include commentary before
+  or after it.
+
+  Requirements for the plan:
+
+  - The file must be written as ordinary Markdown, not JSON.
+  - The plan must be compatible with PlanMark-style task extraction.
+  - Use heading-based tasks for substantial work items.
+  - Every real task must have an explicit `@id`.
+  - Every real task must have an explicit `@horizon` of `now`,
+  `next`, or `later`.
+  - Tasks that should be immediately executable by an agent must use
+  `@horizon now` and include at least one concrete `@accept` line.
+  - Use `@deps` to reference prerequisite task IDs where needed.
+  - Keep rationale, risks, assumptions, rollback notes, and non-goals
+  inside the relevant task section.
+  - Use nested checklist items for execution steps under a task.
+  - Prefer a small number of well-scoped tasks over a large flat
+  list.
+  - Do not invent tracker-specific syntax.
+  - Do not leave important implementation work only in prose; turn it
+  into explicit tasks.
+  - Preserve free-form prose when useful, but make task structure
+  explicit and machine-readable.
+
+  Use this task shape:
+
+  ## <Task Title>
+  @id <stable.machine.id>
+  @horizon <now|next|later>
+  @deps <comma-separated ids if needed>
+  @accept <concrete verification command or acceptance check>
+  @why <optional rationale>
+  @risk <optional risk>
+  @rollback <optional rollback plan>
+  @touches <optional files/modules>
+
+  Short prose explaining the task.
+
+  - [ ] Step one
+  - [ ] Step two
+
+  Project to plan: <Insert your ideas/plan here>
+
+
+
+For PLAN.md Iteration:
+
+I want you to generate a complete `PLAN.md` for a software project
+  that will be executed by coding agents.
+
+  Output only the plan in Markdown. Do not include commentary before
+  or after it.
+
+  Requirements for the plan:
+
+  - The file must be written as ordinary Markdown, not JSON.
+  - The plan must be compatible with PlanMark-style task extraction.
+  - Use heading-based tasks for substantial work items.
+  - Every real task must have an explicit `@id`.
+  - Every real task must have an explicit `@horizon` of `now`,
+  `next`, or `later`.
+  - Tasks that should be immediately executable by an agent must use
+  `@horizon now` and include at least one concrete `@accept` line.
+  - Use `@deps` to reference prerequisite task IDs where needed.
+  - Keep rationale, risks, assumptions, rollback notes, and non-goals
+  inside the relevant task section.
+  - Use nested checklist items for execution steps under a task.
+  - Prefer a small number of well-scoped tasks over a large flat
+  list.
+  - Do not invent tracker-specific syntax.
+  - Do not leave important implementation work only in prose; turn it
+  into explicit tasks.
+  - Preserve free-form prose when useful, but make task structure
+  explicit and machine-readable.
+
+  Use this task shape:
+
+  ## <Task Title>
+  @id <stable.machine.id>
+  @horizon <now|next|later>
+  @deps <comma-separated ids if needed>
+  @accept <concrete verification command or acceptance check>
+  @why <optional rationale>
+  @risk <optional risk>
+  @rollback <optional rollback plan>
+  @touches <optional files/modules>
+
+  Short prose explaining the task.
+
+  - [ ] Step one
+  - [ ] Step two
+
+  Project to plan: <Insert your ideas/plan here>
