@@ -207,6 +207,48 @@ func TestSyncUsesConfigSelectedAdapterAndProfile(t *testing.T) {
 	}
 }
 
+func TestSyncUsesLinearAdapterAndWritesManifest(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	configPath := filepath.Join(tmp, ".planmark.yaml")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync linear config",
+		"  @id fixture.task.sync.linear",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	configBody := strings.Join([]string{
+		"schema_version: v0.1",
+		"tracker:",
+		"  adapter: linear",
+		"  profile: compact",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "\"target\":\"linear\"") {
+		t.Fatalf("expected linear target in json output, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "\"command\":\"sync linear\"") {
+		t.Fatalf("expected sync linear command in json output, got %q", out.String())
+	}
+	manifestPath := filepath.Join(stateDir, "sync", "linear-manifest.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("expected linear manifest at %q: %v", manifestPath, err)
+	}
+}
+
 func TestSyncCLIProfileOverridesConfigProfile(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
@@ -273,6 +315,19 @@ func TestResolveSyncSelectionRejectsConflictingTargetAndAdapterFlag(t *testing.T
 	_, _, err := resolveSyncSelection("beads", "github", "", config.Resolved{})
 	if err == nil || !strings.Contains(err.Error(), "conflicts") {
 		t.Fatalf("expected target/adapter conflict error, got %v", err)
+	}
+}
+
+func TestResolveSyncSelectionSupportsLinear(t *testing.T) {
+	adapter, profile, err := resolveSyncSelection("linear", "", "agentic", config.Resolved{})
+	if err != nil {
+		t.Fatalf("resolve sync selection: %v", err)
+	}
+	if adapter != "linear" {
+		t.Fatalf("expected linear adapter, got %q", adapter)
+	}
+	if profile != "agentic" {
+		t.Fatalf("expected explicit profile to win, got %q", profile)
 	}
 }
 

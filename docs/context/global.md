@@ -12,7 +12,7 @@ Primary outcomes:
 - deterministic compile (`plan compile`) to canonical IR (`plan.json`)
 - tolerance-first diagnostics (`plan doctor`)
 - provenance-backed retrieval and execution context (`plan context`, `plan open`, `plan explain`)
-- deterministic tracker reconciliation (`plan sync beads`)
+- deterministic tracker reconciliation (`plan sync`)
 
 ## Architecture map
 
@@ -40,7 +40,7 @@ Non-negotiables:
 Core command groups:
 - Compile/validate: `compile`, `doctor`, `changes`
 - Context/retrieval: `context`, `open`, `explain`, `pack`, `query`
-- Sync/reconcile: `sync beads`
+- Sync/reconcile: `sync [beads|github|linear]`
 - Replanning: `propose-change`, `apply-change`
 - Metadata/introspection: `version`, `id`
 - Non-canonical AI helpers: `ai ...`

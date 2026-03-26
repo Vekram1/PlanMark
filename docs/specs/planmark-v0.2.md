@@ -183,8 +183,8 @@ This matrix makes strictness explicit at command boundaries rather than parser e
 | `plan context --level L0` | Allowed, but blocks execution packet generation for `horizon=now` tasks missing readiness requirements | Same as Loose with stronger diagnostics on missing/invalid readiness fields | Strict gate: requires `@id`, `@accept`, resolvable `@deps`, and required L0 references | Same as Exec plus repo policy overlays |
 | `plan context --level L1/L2` | Tolerant packet generation with freshness/diagnostic signaling | Same | Same extraction tolerance; strictness remains L0-only for execution gating | Same |
 | `plan open` / `plan explain` | Always retrieval/diagnostic focused; never mutates canonical state | Same | Same | Same |
-| `plan sync beads --dry-run` | Deterministic reconcile planning; non-destructive preview | Same with stronger conflict/drift surfacing | Same | Same with repo policy severity mapping |
-| `plan sync beads` apply | Uses same deterministic operation plan as dry-run; destructive operations remain opt-in by deletion policy | Same | Same | Same with explicit policy gates |
+| `plan sync <adapter> --dry-run` | Deterministic reconcile planning; non-destructive preview | Same with stronger conflict/drift surfacing | Same | Same with repo policy severity mapping |
+| `plan sync <adapter>` apply | Uses same deterministic operation plan as dry-run; destructive operations remain opt-in by deletion policy | Same | Same | Same with explicit policy gates |
 
 Notes:
 - Parsing tolerance is invariant across profiles; profiles mainly control diagnostic severity and execution/apply gating.
@@ -217,9 +217,9 @@ Notes:
 - Tracker adapters expose deterministic capability descriptors so rendering/template policy can validate backend support for body text, steps, child work, custom fields, and safe runtime overlays.
 - Built-in rendering profiles are deterministic named policies (`default`, `compact`, `agentic`, `handoff`) layered on top of the tracker-neutral projection.
 - Future adapter-local template names, if introduced, are expected to be deterministic aliases over those built-in profiles plus adapter-local field layout choices; they must not become arbitrary user-authored text templates in the canonical sync path.
-- The current proven adapters are `beads` and a GitHub Issues proof adapter.
+- The current proven adapters are `beads`, a GitHub Issues proof adapter, and a Linear proof adapter.
 - Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
-- The GitHub proof adapter renders deterministic markdown issue title/body payloads from the same tracker-neutral projection and render-profile layer.
+- The GitHub and Linear proof adapters render deterministic markdown issue title/body payloads from the same tracker-neutral projection and render-profile layer.
 - Sync planning hashes the full canonical tracker-neutral projection, so reserved fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
 - The staged adapter roadmap is now:
   - markdown-issue adapters first (`linear`, `jira` phase 1 basic issue rendering)
@@ -284,7 +284,7 @@ Supported mapping:
 
 ```yaml
 tracker:
-  adapter: beads
+  adapter: beads  # or: github, linear
   profile: default
 ```
 
@@ -293,7 +293,7 @@ Rules:
 - Tracker config values contribute to effective config hashing for reproducibility diagnostics.
 - Selection precedence for `plan sync`:
   1. explicit CLI flags (`--adapter`, `--profile`)
-  2. positional sync target (`plan sync beads`, `plan sync github`)
+  2. positional sync target (`plan sync beads`, `plan sync github`, `plan sync linear`)
   3. `.planmark.yaml` `tracker:` values
   4. built-in defaults (`adapter=beads`, adapter default render profile)
 - Explicit CLI adapter selection must not conflict with an explicit positional target.

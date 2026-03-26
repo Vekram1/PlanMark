@@ -201,6 +201,12 @@ Dry-run GitHub proof adapter:
 plan sync github --plan PLAN.md --dry-run --format json
 ```
 
+Dry-run Linear proof adapter:
+
+```bash
+plan sync linear --plan PLAN.md --dry-run --format json
+```
+
 You can also select the adapter and render profile explicitly:
 
 ```bash
@@ -218,6 +224,7 @@ Current proven adapters:
 
 - `beads`
 - `github`
+- `linear`
 
 ## Optional Repo Config
 
@@ -225,7 +232,7 @@ You can set default tracker selection in `.planmark.yaml`:
 
 ```yaml
 tracker:
-  adapter: beads
+  adapter: beads  # or: github, linear
   profile: default
 ```
 
@@ -344,13 +351,13 @@ plan context <id> --plan PLAN.md --level L0 --format json
 plan open <id|node-ref> --plan PLAN.md --format json
 plan explain <id> --plan PLAN.md --format rich
 plan handoff <id|node-ref> --plan PLAN.md --format json
-plan sync [beads|github] --plan PLAN.md --dry-run --format json
+plan sync [beads|github|linear] --plan PLAN.md --dry-run --format json
 ```
 
 ## Current Limitations
 
 - `PLAN.md` is the canonical source, so tracker changes are projection/runtime state, not plan edits
-- only `beads` and `github` are currently proven adapters
+- only `beads`, `github`, and `linear` are currently proven adapters
 - richer Markdown support is implemented conservatively; PlanMark still promotes only a narrow set of planning shapes into semantics
 - AI helper output is non-canonical and should be reviewed before applying anything
 

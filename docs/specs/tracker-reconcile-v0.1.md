@@ -98,6 +98,7 @@ Current proven adapters:
 
 - `beads`: projection-backed local tracker with safe runtime overlays for `status`, `assignee`, and `priority`
 - `github`: GitHub Issues proof adapter with deterministic markdown issue rendering and safe runtime overlays for `status` and `assignee`
+- `linear`: Linear proof adapter with deterministic markdown issue rendering and safe runtime overlays for `status` and `assignee`
 
 Current built-in rendering profiles:
 
@@ -112,6 +113,7 @@ Current adapter/profile usage:
 
 - `beads` uses the `default` render profile internally while preserving its existing projection payload schema
 - `github` uses the `default` render profile to build deterministic issue title/body payloads and tracker labels
+- `linear` uses the `default` render profile to build deterministic issue title/description payloads and tracker labels
 
 Profile names are the current user-facing rendering selector.
 Future adapter-local template names, if added, must remain deterministic aliases layered on top of these profiles rather than an unrestricted text templating system.
@@ -119,7 +121,7 @@ Future adapter-local template names, if added, must remain deterministic aliases
 Selection sources are deterministic and repository-local:
 
 - explicit `plan sync` CLI flags (`--adapter`, `--profile`)
-- explicit positional sync target (`beads`, `github`)
+- explicit positional sync target (`beads`, `github`, `linear`)
 - `.planmark.yaml` `tracker:` defaults
 - built-in defaults when no tracker config is present
 

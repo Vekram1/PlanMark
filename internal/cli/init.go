@@ -30,7 +30,7 @@ profiles:
 
 # Optional tracker sync defaults:
 # tracker:
-#   adapter: beads
+#   adapter: beads   # or: github, linear
 #   profile: default
 
 # Optional AI provider settings for "plan ai apply-fix":
@@ -56,7 +56,7 @@ When operating in this project, you can use these ` + "`plan`" + ` commands:
 - ` + "`plan explain <id> --plan <path> [--format text|rich|json]`" + `
 - ` + "`plan handoff <id|node-ref> --plan <path> [--format text|json]`" + `
 - ` + "`plan query --plan <path> [--horizon now|next|later] [--ready|--blocked] [--format text|json]`" + `
-- ` + "`plan sync [beads|github] --plan <path> [--adapter beads|github] [--profile default|compact|agentic|handoff] [--dry-run] [--format text|json]`" + `
+- ` + "`plan sync [beads|github|linear] --plan <path> [--adapter beads|github|linear] [--profile default|compact|agentic|handoff] [--dry-run] [--format text|json]`" + `
 - ` + "`plan changes --plan <path> [--format text|json]`" + `
 
 Optional assistive (non-canonical) commands:
