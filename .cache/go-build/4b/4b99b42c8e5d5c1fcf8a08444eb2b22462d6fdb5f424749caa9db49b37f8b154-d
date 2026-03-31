@@ -1,0 +1,3 @@
+./classify.go
+./gitdiff_hint.go
+./semantic_diff.go

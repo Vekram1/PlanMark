@@ -1,0 +1,4 @@
+./diagnostics.go
+./doctor.go
+./fixout.go
+./policy.go

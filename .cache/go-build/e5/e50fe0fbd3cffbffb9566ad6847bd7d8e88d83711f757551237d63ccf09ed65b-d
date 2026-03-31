@@ -1,0 +1,6 @@
+./attach.go
+./compiler.go
+./coverage.go
+./limits.go
+./metadata.go
+./parser.go
