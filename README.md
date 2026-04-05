@@ -2,35 +2,28 @@
 
 PlanMark turns a `PLAN.md` file into deterministic, machine-usable planning artifacts.
 
-If you want an agent to work from a plan without making the tracker or the model output canonical, this is the tool:
+Use it when you want:
+- `PLAN.md` to stay canonical
+- agents to consume structured task context instead of scraping prose
+- tracker sync to be a projection of the plan, not the source of truth
+- deterministic compile, diagnostics, and handoff outputs
 
-- you write `PLAN.md`
-- PlanMark compiles it into structured IR
-- PlanMark checks readiness and blockers
-- PlanMark produces task context and handoff packets for agents
-- PlanMark can project that same plan into a tracker without making the tracker the source of truth
+## What It Does
 
-`PLAN.md` stays canonical.
+PlanMark keeps ordinary Markdown as the authoring surface and derives structured outputs from it.
 
-## What A New User Should Expect
+The core workflow is:
+1. write `PLAN.md`
+2. compile it into deterministic IR
+3. check readiness and blockers
+4. fetch task context or handoff packets for agents
+5. optionally sync projected tasks into a tracker
 
-You do not need to learn a separate DSL (Domain Specific Language).
-You write normal Markdown with a small amount of structured metadata.
-
-The basic workflow is:
-
-1. initialize PlanMark in your repo
-2. write a small `PLAN.md`
-3. run `plan compile`
-4. run `plan doctor`
-5. ask for task context with `plan context` or `plan handoff`
-6. optionally preview tracker sync with `plan sync --dry-run`
-
-If those steps work, your agent already has something solid to operate on.
+You do not need a separate DSL. PlanMark uses normal Markdown plus a small amount of task metadata such as `@id`, `@horizon`, `@deps`, and `@accept`.
 
 ## Install
 
-From a source checkout:
+Build from a local checkout:
 
 ```bash
 go build -o ./bin/plan ./cmd/plan
@@ -38,34 +31,52 @@ export PATH="$PWD/bin:$PATH"
 plan version --format json
 ```
 
-Global install on macOS/Linux:
+Install with the project script on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
 plan version --format json
 ```
 
-If `plan` is not found after install, add the installer path to your shell:
+If `plan` is not on your shell path after install:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## First-Time Quickstart
+## First 10 Minutes
 
-Initialize the current repo once:
+Initialize the repo:
 
 ```bash
 plan init --dir . --format text
 ```
 
-This creates local PlanMark state under `.planmark/` and, if missing, starter files such as `PLAN.md` and `.planmark.yaml`.
+This creates repo-local PlanMark state under `.planmark/` and adds starter files such as `PLAN.md`, `.planmark.yaml`, and a managed PlanMark section in `AGENTS.md` when missing.
 
-Now replace `PLAN.md` with something small and real.
+Compile the initial plan:
 
-## Write Your First `PLAN.md`
+```bash
+plan compile --plan PLAN.md --out .planmark/tmp/plan.json
+```
 
-This is a good starting example for an API rollout feature:
+Check the plan for readiness issues:
+
+```bash
+plan doctor --plan PLAN.md --profile loose --format rich
+```
+
+List tasks:
+
+```bash
+plan query --plan PLAN.md --format text
+```
+
+If those commands work, the repo is ready for agent-facing task context.
+
+## Your First `PLAN.md`
+
+A small, realistic example:
 
 ```md
 # PLAN
@@ -79,7 +90,7 @@ This is a good starting example for an API rollout feature:
 @accept cmd:go test ./...
 @rollback restore snapshot and revert migration file
 
-We need additive rollout because older workers may still read legacy columns.
+We need an additive rollout because older workers may still read legacy columns.
 
 - [ ] Write additive migration
 - [ ] Verify rollback path
@@ -92,16 +103,7 @@ We need additive rollout because older workers may still read legacy columns.
 Confirm the new columns are additive and safe for older readers.
 ```
 
-What matters here:
-
-- each real task has a clear title
-- tasks that will be referenced or synced get an explicit `@id`
-- work you want agents to execute now gets `@horizon now`
-- execution-ready tasks should have at least one `@accept`
-- nested checklist items become ordered steps for the parent task
-- free-form prose stays useful context for the agent
-
-You can also use a compact checkbox task style:
+A compact checkbox task style also works:
 
 ```md
 - [ ] Add migration
@@ -111,218 +113,89 @@ You can also use a compact checkbox task style:
   @accept cmd:go test ./...
 ```
 
-Use heading tasks when you want rationale, tables, examples, or steps under the task.
-Give a heading task explicit task metadata such as `@id` or `@horizon`; a bare heading is just section structure.
+Use heading tasks when you want rationale, examples, risk notes, or a scoped execution checklist under the task. A bare heading without task metadata is just document structure.
 
-## Run The Core Workflow
+## Commands New Users Actually Need
 
-Compile the plan:
+Compile to deterministic IR:
 
 ```bash
 plan compile --plan PLAN.md --out .planmark/tmp/plan.json
 ```
 
-This gives you deterministic IR derived from `PLAN.md`.
-
-Check for blockers and readiness problems:
+Check health with increasing strictness:
 
 ```bash
 plan doctor --plan PLAN.md --profile loose --format rich
-```
-
-For stricter execution gating on `@horizon now` work:
-
-```bash
+plan doctor --plan PLAN.md --profile build --format rich
 plan doctor --plan PLAN.md --profile exec --format rich
 ```
 
-List tasks:
+Query tasks:
 
 ```bash
 plan query --plan PLAN.md --format text
 ```
 
-You should now be able to see your tasks, IDs, and readiness state.
-
-## Get Agent-Usable Task Context
-
-For an agent, the most useful commands are usually these:
-
-Task context packet:
+Get agent-usable task context:
 
 ```bash
 plan context api.migrate --plan PLAN.md --level L0 --format json
-```
-
-Exact source lookup:
-
-```bash
 plan open api.migrate --plan PLAN.md --format json
-```
-
-Why a task looks the way it does:
-
-```bash
 plan explain api.migrate --plan PLAN.md --format rich
-```
-
-Task handoff packet:
-
-```bash
 plan handoff api.migrate --plan PLAN.md --format json
 ```
 
-These are the outputs an agent should usually consume first, rather than scraping `PLAN.md` directly.
-
-Recommended escalation path:
+Recommended escalation path for agents:
 
 1. `plan context <id> --level L0`
-2. `plan open <id>`
+2. `plan open <id|node-ref>`
 3. `plan explain <id>`
 4. `plan context <id> --level L1`
 5. `plan context <id> --level L2`
 
-That keeps agent context small while preserving deterministic traceability back to source.
+That keeps context small while preserving deterministic traceability back to the plan source.
 
-## Preview Tracker Sync
+## Tracker Sync
 
-PlanMark can project tasks into a tracker, but the tracker is not canonical.
-`PLAN.md` remains the source of truth.
+Trackers are projection layers. `PLAN.md` remains canonical.
 
-Dry-run Beads sync:
+Preview sync without mutating the tracker:
 
 ```bash
 plan sync beads --plan PLAN.md --dry-run --format json
-```
-
-Dry-run GitHub proof adapter:
-
-```bash
 plan sync github --plan PLAN.md --dry-run --format json
-```
-
-Dry-run Linear proof adapter:
-
-```bash
 plan sync linear --plan PLAN.md --dry-run --format json
 ```
 
-You can also select the adapter and render profile explicitly:
+Or select the adapter explicitly:
 
 ```bash
 plan sync --plan PLAN.md --adapter github --profile compact --dry-run --format json
 ```
 
-Current built-in render profiles:
-
+Built-in render profiles:
 - `default`
 - `compact`
 - `agentic`
 - `handoff`
 
 Current proven adapters:
-
 - `beads`
 - `github`
 - `linear`
 
-## Optional Repo Config
-
-You can set default tracker selection in `.planmark.yaml`:
+Optional defaults in `.planmark.yaml`:
 
 ```yaml
 tracker:
-  adapter: beads  # or: github, linear
+  adapter: beads
   profile: default
-```
-
-Then `plan sync --plan PLAN.md --dry-run --format json` will use those defaults.
-
-## What Makes A Good Plan For Agents
-
-If you want good results from agents, write plans with these habits:
-
-- give important tasks explicit `@id`s
-- keep rationale near the task, not in a distant section
-- add `@accept` before asking an agent to execute `@horizon now` work
-- use nested checklists for steps
-- keep risks and rollback notes inside the task scope
-- prefer a few well-scoped tasks over a long flat checklist with no metadata
-
-The goal is not to encode everything.
-The goal is to make each task a bounded unit of work with enough nearby context to act on safely.
-
-## Iterating On An Existing `PLAN.md` With An LLM
-
-Once you already have a full `PLAN.md`, a useful next step is to ask an LLM to review it and propose improvements.
-
-The best version of that prompt is not "rewrite my plan" in the abstract.
-It should ask for:
-
-- architectural improvements
-- feature additions or removals
-- sequencing changes
-- robustness, reliability, and performance improvements
-- explicit rationale for each recommendation
-- git-diff-style edits relative to the original plan
-
-Use a prompt like this:
-
-```text
-Carefully review this entire plan for me and come up with your best revisions in terms of better architecture, new features, changed features, etc. to make it better, more robust/reliable, more performant, more compelling/useful, etc.
-
-For each proposed change, give me your detailed analysis and rationale/justification for why it would make the project better along with the git-diff style changes relative to the original markdown plan shown below:
-
-<PASTE YOUR EXISTING COMPLETE PLAN HERE>
-```
-
-If you want the model to preserve PlanMark-compatible task structure more explicitly, use this stronger version:
-
-```text
-Carefully review this entire plan for me and come up with your best revisions in terms of better architecture, new features, changed features, sequencing changes, reliability improvements, performance improvements, and anything else that would make the project more compelling and more useful.
-
-For each proposed change:
-
-1. Explain the recommendation clearly.
-2. Give detailed rationale for why it improves the project.
-3. Call out any tradeoffs, risks, or scope implications.
-4. Show the exact git-diff style markdown changes relative to the original plan.
-
-When proposing plan edits, preserve PlanMark-style task structure:
-- use ordinary Markdown
-- use heading-based tasks for substantial work
-- keep explicit `@id` and `@horizon`
-- use `@deps` when prerequisites matter
-- keep rationale, risks, rollback notes, and assumptions inside the relevant task section
-- use nested checklist items for execution steps
-- do not invent tracker-specific syntax
-- do not leave important implementation work only in prose
-
-Here is the full original plan:
-
-<PASTE YOUR EXISTING COMPLETE PLAN HERE>
-```
-
-What to do with the result:
-
-- keep the original `PLAN.md` open beside the model output
-- review the rationale before accepting any diff
-- prefer edits that turn vague prose into explicit tasks
-- reject recommendations that remove necessary implementation detail
-- re-run `plan compile` and `plan doctor` after you update the plan
-
-Recommended follow-up after applying accepted revisions:
-
-```bash
-plan compile --plan PLAN.md --out .planmark/tmp/plan.json
-plan doctor --plan PLAN.md --profile build --format rich
-plan handoff <id> --plan PLAN.md --format json
 ```
 
 ## Canonical vs Non-Canonical
 
 Canonical deterministic commands:
-
 - `plan compile`
 - `plan doctor`
 - `plan context`
@@ -331,13 +204,24 @@ Canonical deterministic commands:
 - `plan handoff`
 - `plan sync`
 
-These are intended to remain deterministic and offline-safe.
+These are intended to stay deterministic and offline-safe.
 
-AI helpers are optional and non-canonical:
-
+Optional assistive commands live under:
 - `plan ai ...`
 
-Use them as assistive tooling, not as the source of truth.
+Use AI helpers as drafting support, not as the source of truth.
+
+## Writing Plans That Work Well For Agents
+
+Good PlanMark plans usually have these traits:
+- important tasks have explicit `@id` values
+- rationale sits near the task instead of in a distant section
+- `@horizon now` work includes at least one `@accept`
+- nested checklists describe execution steps within the task scope
+- rollback notes, assumptions, and risks stay attached to the relevant task
+- tasks are bounded and specific instead of being a long flat checklist
+
+The goal is not to formalize everything. The goal is to make each task executable with enough nearby context to act safely.
 
 ## Common Commands
 
@@ -353,13 +237,6 @@ plan explain <id> --plan PLAN.md --format rich
 plan handoff <id|node-ref> --plan PLAN.md --format json
 plan sync [beads|github|linear] --plan PLAN.md --dry-run --format json
 ```
-
-## Current Limitations
-
-- `PLAN.md` is the canonical source, so tracker changes are projection/runtime state, not plan edits
-- only `beads`, `github`, and `linear` are currently proven adapters
-- richer Markdown support is implemented conservatively; PlanMark still promotes only a narrow set of planning shapes into semantics
-- AI helper output is non-canonical and should be reviewed before applying anything
 
 ## Development
 
