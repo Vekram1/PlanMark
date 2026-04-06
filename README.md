@@ -46,6 +46,15 @@ export PATH="$HOME/.local/bin:$PATH"
 
 The installer places `planmark` on your path and also installs `plan` as a compatibility alias by default.
 
+Install on Windows with PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.ps1 | iex"
+planmark version --format json
+```
+
+Windows release assets are published as `.zip` archives. The PowerShell installer installs `planmark.exe` and `plan.exe` under `%LOCALAPPDATA%\Programs\PlanMark\bin` by default.
+
 ## First 10 Minutes
 
 Initialize the repo:
