@@ -50,9 +50,9 @@ func runCompile(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("compile", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
-	outPath := fs.String("out", "", "path to output plan json")
-	stateDir := fs.String("state-dir", "", "path to local planmark state directory for compile manifest output")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
+	outPath := fs.String("out", "", "write compiled IR to `output-json-file`")
+	stateDir := fs.String("state-dir", "", "path to local PlanMark `state-dir` for compile manifest output")
 	gitDiffHints := fs.Bool("git-diff-hints", false, "ingest git diff hunks as advisory hints only")
 	format := fs.String("format", "json", "output format: json")
 	if err := fs.Parse(filteredArgs); err != nil {

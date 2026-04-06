@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -57,6 +58,34 @@ type BeadsAdapter struct {
 	runtimeByID        map[string]RuntimeFields
 	lastSeenRuntime    map[string]string
 	pushFailuresByID   map[string][]error
+}
+
+var runBrCommand = func(args ...string) ([]byte, error) {
+	cmd := exec.Command("br", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if len(output) == 0 {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return output, nil
+}
+
+type beadsIssue struct {
+	ID                 string `json:"id"`
+	Title              string `json:"title"`
+	Status             string `json:"status,omitempty"`
+	Assignee           string `json:"assignee,omitempty"`
+	ExternalRef        string `json:"external_ref,omitempty"`
+	Description        string `json:"description,omitempty"`
+	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
+}
+
+type beadsErrorEnvelope struct {
+	Error struct {
+		Code string `json:"code"`
+	} `json:"error"`
 }
 
 func NewBeadsAdapter() *BeadsAdapter {
@@ -117,6 +146,29 @@ func (a *BeadsAdapter) SeedFromSyncManifest(manifest BeadsSyncManifest) {
 	}
 }
 
+func (a *BeadsAdapter) ReconcileSyncManifest(_ context.Context, manifest BeadsSyncManifest) (BeadsSyncManifest, error) {
+	reconciled := BeadsSyncManifest{
+		SchemaVersion: manifest.SchemaVersion,
+		Entries:       make([]BeadsManifestEntry, 0, len(manifest.Entries)),
+	}
+	if reconciled.SchemaVersion == "" {
+		reconciled.SchemaVersion = BeadsManifestSchemaVersionV01
+	}
+	for _, entry := range manifest.Entries {
+		if !isLikelyBeadsIssueID(entry.RemoteID) {
+			continue
+		}
+		if _, err := a.lookupIssue(entry.RemoteID); err != nil {
+			if isBeadsIssueNotFound(err) {
+				continue
+			}
+			return BeadsSyncManifest{}, err
+		}
+		reconciled.Entries = append(reconciled.Entries, entry)
+	}
+	return reconciled, nil
+}
+
 func BuildProjectionPayload(task TaskProjection) (BeadsProjectionPayload, error) {
 	rendered, err := RenderTask(task, NewBeadsAdapter().Capabilities(), BeadsRenderProfile)
 	if err != nil {
@@ -167,7 +219,7 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 	}
 
 	previousHash, hasPrevious := a.projectionHashByID[task.ID]
-	if hasPrevious && previousHash == currentHash {
+	if hasPrevious && previousHash == currentHash && isLikelyBeadsIssueID(a.remoteIDByID[task.ID]) {
 		return PushResult{
 			RemoteID:   a.remoteIDByID[task.ID],
 			Mutated:    false,
@@ -176,9 +228,28 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		}, nil
 	}
 
-	remoteID := a.remoteIDByID[task.ID]
-	if remoteID == "" {
-		remoteID = "beads:" + task.ID
+	remoteID := strings.TrimSpace(a.remoteIDByID[task.ID])
+	description := strings.Join(rendered.Body, "\n")
+	acceptance := strings.Join(orderedStrings(task.Acceptance), "\n")
+	if !isLikelyBeadsIssueID(remoteID) {
+		existing, err := a.lookupIssueByExternalRef(task.ID)
+		if err != nil {
+			return PushResult{}, err
+		}
+		if isLikelyBeadsIssueID(existing.ID) {
+			remoteID = existing.ID
+		}
+	}
+	if isLikelyBeadsIssueID(remoteID) {
+		if _, err := a.updateIssueWithExternalRef(remoteID, task.ID, rendered.Title, description, acceptance); err != nil {
+			return PushResult{}, err
+		}
+	} else {
+		issue, err := a.createIssueWithExternalRef(task.ID, rendered.Title, description, acceptance)
+		if err != nil {
+			return PushResult{}, err
+		}
+		remoteID = issue.ID
 	}
 	a.projectionHashByID[task.ID] = currentHash
 	a.sourceHashByID[task.ID] = payload.SourceHash
@@ -196,6 +267,119 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		Noop:       false,
 		Diagnostic: diagnostic,
 	}, nil
+}
+
+func (a *BeadsAdapter) createIssue(title string, description string, acceptance string) (beadsIssue, error) {
+	return a.createIssueWithExternalRef("", title, description, acceptance)
+}
+
+func (a *BeadsAdapter) createIssueWithExternalRef(externalRef string, title string, description string, acceptance string) (beadsIssue, error) {
+	args := []string{"create", "--title", title, "--type", "task", "--json"}
+	if strings.TrimSpace(externalRef) != "" {
+		args = append(args, "--external-ref", externalRef)
+	}
+	createDescription := description
+	if strings.TrimSpace(acceptance) != "" {
+		if strings.TrimSpace(createDescription) != "" {
+			createDescription += "\n\n## Acceptance\n" + acceptance
+		} else {
+			createDescription = "## Acceptance\n" + acceptance
+		}
+	}
+	if strings.TrimSpace(createDescription) != "" {
+		args = append(args, "--description", createDescription)
+	}
+	output, err := runBrCommand(args...)
+	if err != nil {
+		return beadsIssue{}, fmt.Errorf("br create: %w", err)
+	}
+	var issue beadsIssue
+	if err := json.Unmarshal(output, &issue); err != nil {
+		return beadsIssue{}, fmt.Errorf("decode br create output: %w", err)
+	}
+	if !isLikelyBeadsIssueID(issue.ID) {
+		return beadsIssue{}, fmt.Errorf("br create returned invalid issue id %q", issue.ID)
+	}
+	return issue, nil
+}
+
+func (a *BeadsAdapter) updateIssue(id string, title string, description string, acceptance string) (beadsIssue, error) {
+	return a.updateIssueWithExternalRef(id, "", title, description, acceptance)
+}
+
+func (a *BeadsAdapter) updateIssueWithExternalRef(id string, externalRef string, title string, description string, acceptance string) (beadsIssue, error) {
+	args := []string{"update", id, "--title", title, "--description", description, "--acceptance-criteria", acceptance}
+	if strings.TrimSpace(externalRef) != "" {
+		args = append(args, "--external-ref", externalRef)
+	}
+	args = append(args, "--json")
+	output, err := runBrCommand(args...)
+	if err != nil {
+		return beadsIssue{}, fmt.Errorf("br update %s: %w", id, err)
+	}
+	var issues []beadsIssue
+	if err := json.Unmarshal(output, &issues); err != nil {
+		return beadsIssue{}, fmt.Errorf("decode br update output: %w", err)
+	}
+	if len(issues) == 0 {
+		return beadsIssue{}, fmt.Errorf("br update %s returned no issues", id)
+	}
+	return issues[0], nil
+}
+
+func (a *BeadsAdapter) lookupIssue(id string) (beadsIssue, error) {
+	output, err := runBrCommand("show", id, "--json")
+	if err != nil {
+		return beadsIssue{}, fmt.Errorf("br show %s: %w", id, err)
+	}
+	var issues []beadsIssue
+	if err := json.Unmarshal(output, &issues); err != nil {
+		return beadsIssue{}, fmt.Errorf("decode br show output: %w", err)
+	}
+	if len(issues) == 0 {
+		return beadsIssue{}, fmt.Errorf("br show %s returned no issues", id)
+	}
+	return issues[0], nil
+}
+
+func (a *BeadsAdapter) lookupIssueByExternalRef(externalRef string) (beadsIssue, error) {
+	if strings.TrimSpace(externalRef) == "" {
+		return beadsIssue{}, nil
+	}
+	output, err := runBrCommand("list", "--all", "--json")
+	if err != nil {
+		return beadsIssue{}, fmt.Errorf("br list: %w", err)
+	}
+	var issues []beadsIssue
+	if err := json.Unmarshal(output, &issues); err != nil {
+		return beadsIssue{}, fmt.Errorf("decode br list output: %w", err)
+	}
+	for _, issue := range issues {
+		if strings.TrimSpace(issue.ExternalRef) == strings.TrimSpace(externalRef) {
+			return issue, nil
+		}
+	}
+	return beadsIssue{}, nil
+}
+
+func isLikelyBeadsIssueID(id string) bool {
+	return strings.HasPrefix(strings.TrimSpace(id), "bead-")
+}
+
+func isBeadsIssueNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	raw := err.Error()
+	if idx := strings.Index(raw, "{"); idx >= 0 {
+		raw = raw[idx:]
+	}
+	var payload beadsErrorEnvelope
+	if jsonErr := json.Unmarshal([]byte(raw), &payload); jsonErr == nil {
+		return strings.EqualFold(strings.TrimSpace(payload.Error.Code), "ISSUE_NOT_FOUND")
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "issue_not_found") || strings.Contains(lower, "issue not found")
 }
 
 func buildProjectionPayloadFromRendered(task TaskProjection, rendered RenderedTask) (BeadsProjectionPayload, error) {

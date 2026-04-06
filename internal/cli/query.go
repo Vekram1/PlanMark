@@ -30,7 +30,7 @@ type queryFilters struct {
 func runQuery(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	horizon := fs.String("horizon", "", "horizon filter: now|next|later")
 	ready := fs.Bool("ready", false, "include only ready tasks")
 	blocked := fs.Bool("blocked", false, "include only blocked tasks")

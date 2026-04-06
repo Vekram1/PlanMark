@@ -44,7 +44,7 @@ func runOpen(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("open", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	format := fs.String("format", "text", "output format: text|json")
 	parent := fs.Bool("parent", false, "show parent context (not implemented)")
 	neighbors := fs.Bool("neighbors", false, "show neighbor nodes (not implemented)")

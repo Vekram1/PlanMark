@@ -181,6 +181,29 @@ func TestDoctorFixOutDeterministic(t *testing.T) {
 	}
 }
 
+func TestDoctorRejectsFlagTokenAsFixOutValue(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id task.now",
+		"  @horizon now",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"doctor", "--fix-out", "--plan", planPath}, &out, &errOut)
+	if exit != 2 {
+		t.Fatalf("expected usage error exit, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "invalid --fix-out value") {
+		t.Fatalf("expected targeted fix-out error, got %q", errOut.String())
+	}
+}
+
 func TestDoctorCompileLimitFailureIsDiagnostic(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")

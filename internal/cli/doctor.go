@@ -21,16 +21,20 @@ import (
 func runDoctor(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	profileFlag := hasLongFlag(args, "profile")
 	profile := fs.String("profile", "", "strictness profile: loose|build|exec")
 	format := fs.String("format", "text", "output format: text|rich|json")
-	fixOut := fs.String("fix-out", "", "write deterministic repair suggestions as Plan Delta JSON (no file mutation)")
+	fixOut := fs.String("fix-out", "", "write deterministic repair suggestions to `delta-json-file` (does not modify the plan file)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return protocol.ExitSuccess
 		}
 		fmt.Fprintln(stderr, err.Error())
+		return protocol.ExitUsageError
+	}
+	if strings.HasPrefix(strings.TrimSpace(*fixOut), "-") {
+		fmt.Fprintln(stderr, "invalid --fix-out value: expected delta JSON output path")
 		return protocol.ExitUsageError
 	}
 

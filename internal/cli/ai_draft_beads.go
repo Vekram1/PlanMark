@@ -39,7 +39,7 @@ type draftBeadsResult struct {
 func runAIDraftBeads(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ai draft-beads", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	format := fs.String("format", "text", "output format: text|json")
 	horizon := fs.String("horizon", "all", "horizon filter: all|now|next|later")
 	limit := fs.Int("limit", 20, "max suggestions to emit")

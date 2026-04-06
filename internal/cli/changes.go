@@ -33,8 +33,8 @@ type changesResult struct {
 func runChanges(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("changes", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "PLAN.md", "path to PLAN markdown file")
-	stateDir := fs.String("state-dir", ".planmark", "path to planmark local state directory")
+	planPath := fs.String("plan", "PLAN.md", "path to `plan-file` markdown file")
+	stateDir := fs.String("state-dir", ".planmark", "path to local PlanMark `state-dir`")
 	since := fs.String("since", "", "baseline compile id or git ref for deterministic comparison")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(args); err != nil {
