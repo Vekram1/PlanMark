@@ -640,7 +640,7 @@ func TestSyncBeadsCLIJSONOutputStable(t *testing.T) {
 	}
 }
 
-func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
+func TestBeadProvenanceOnlyChangeIsNoop(t *testing.T) {
 	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
@@ -689,24 +689,24 @@ func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
 				ID     string `json:"id"`
 				Reason string `json:"reason"`
 			} `json:"planned_ops"`
-			MarkStaleCount int `json:"mark_stale_count"`
+			NoopCount int `json:"noop_count"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("decode dry-run json: %v output=%q", err, out.String())
 	}
-	if payload.Data.MarkStaleCount != 1 {
-		t.Fatalf("expected mark_stale_count=1, got %d output=%q", payload.Data.MarkStaleCount, out.String())
+	if payload.Data.NoopCount != 1 {
+		t.Fatalf("expected noop_count=1, got %d output=%q", payload.Data.NoopCount, out.String())
 	}
 	if len(payload.Data.PlannedOps) != 1 {
 		t.Fatalf("expected one planned op, got %d output=%q", len(payload.Data.PlannedOps), out.String())
 	}
 	op := payload.Data.PlannedOps[0]
-	if op.Kind != "mark-stale" || op.ID != "fixture.task.provenance" {
-		t.Fatalf("expected mark-stale op for fixture.task.provenance, got %+v", op)
+	if op.Kind != "no-op" || op.ID != "fixture.task.provenance" {
+		t.Fatalf("expected no-op for fixture.task.provenance, got %+v", op)
 	}
-	if !strings.Contains(op.Reason, "stale provenance mismatch") {
-		t.Fatalf("expected explicit stale provenance reason, got %q", op.Reason)
+	if op.Reason != "projection unchanged" {
+		t.Fatalf("expected projection unchanged reason, got %q", op.Reason)
 	}
 }
 

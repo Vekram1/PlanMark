@@ -54,6 +54,10 @@ type beadsSyncAdapter interface {
 	Capabilities() tracker.TrackerCapabilities
 }
 
+type trackerDBPathConfigurer interface {
+	SetDBPath(path string)
+}
+
 type syncManifestReconciler interface {
 	ReconcileSyncManifest(ctx context.Context, manifest tracker.SyncManifest) (tracker.SyncManifest, error)
 }
@@ -192,6 +196,9 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return protocol.ExitUsageError
+	}
+	if dbConfigurer, ok := adapter.(trackerDBPathConfigurer); ok {
+		dbConfigurer.SetDBPath(filepath.Join(".beads", "beads.db"))
 	}
 	if resolvedProfile != "" {
 		adapter.SetRenderProfile(tracker.RenderProfile(resolvedProfile))

@@ -704,6 +704,115 @@ func TestBeadsAcceptsBDIssueIDsFromBr(t *testing.T) {
 	}
 }
 
+func TestBeadsPushTitleChangeUpdatesExistingIssue(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	createCalls := 0
+	updateCalls := 0
+	runBrCommand = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		switch args[0] {
+		case "list":
+			if createCalls == 0 {
+				return []byte(`[]`), nil
+			}
+			return []byte(`[{"id":"bd-2e7","title":"Verification objective","external_ref":"fv.reconcile.root"}]`), nil
+		case "create":
+			createCalls++
+			if !slices.Contains(args, "--title") || !slices.Contains(args, "Verification objective") {
+				t.Fatalf("expected create to use initial title, got %#v", args)
+			}
+			return []byte(`{"id":"bd-2e7","title":"Verification objective"}`), nil
+		case "update":
+			updateCalls++
+			if !slices.Contains(args, "--title") || !slices.Contains(args, "Verification objectives") {
+				t.Fatalf("expected update to use new title, got %#v", args)
+			}
+			return []byte(`[{"id":"bd-2e7","title":"Verification objectives","external_ref":"fv.reconcile.root"}]`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
+	adapter := NewBeadsAdapter()
+	task := TaskProjection{
+		ID:    "fv.reconcile.root",
+		Title: "Verification objective",
+		Provenance: TaskProvenance{
+			NodeRef:    "./PLAN.md|heading|root#1",
+			Path:       "./PLAN.md",
+			StartLine:  5,
+			EndLine:    21,
+			SourceHash: strings.Repeat("a", 64),
+			CompileID:  strings.Repeat("c", 64),
+		},
+	}
+
+	if _, err := adapter.PushTask(context.Background(), task); err != nil {
+		t.Fatalf("first push task: %v", err)
+	}
+
+	task.Title = "Verification objectives"
+	if _, err := adapter.PushTask(context.Background(), task); err != nil {
+		t.Fatalf("second push task: %v", err)
+	}
+
+	if createCalls != 1 {
+		t.Fatalf("expected exactly one create call, got %d", createCalls)
+	}
+	if updateCalls != 1 {
+		t.Fatalf("expected exactly one update call, got %d", updateCalls)
+	}
+}
+
+func TestBeadsAdapterUsesExplicitDBPath(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	var seen [][]string
+	runBrCommand = func(args ...string) ([]byte, error) {
+		seen = append(seen, append([]string(nil), args...))
+		switch args[0] {
+		case "list":
+			return []byte(`[]`), nil
+		case "create":
+			return []byte(`{"id":"bd-301","title":"Create issue"}`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
+	adapter := NewBeadsAdapter()
+	adapter.SetDBPath(filepath.Join(t.TempDir(), ".beads", "beads.db"))
+	task := TaskProjection{
+		ID:    "fixture.task.create",
+		Title: "Create issue",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  3,
+			EndLine:    5,
+			SourceHash: strings.Repeat("3", 64),
+		},
+	}
+
+	if _, err := adapter.PushTask(context.Background(), task); err != nil {
+		t.Fatalf("push task: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected list + create calls, got %#v", seen)
+	}
+	for _, args := range seen {
+		if len(args) < 3 || args[1] != "--db" {
+			t.Fatalf("expected explicit --db arg, got %#v", args)
+		}
+	}
+}
+
 func TestBeadsWriteSyncManifestRespectsLock(t *testing.T) {
 	adapter := NewBeadsAdapter()
 	stateDir := filepath.Join(t.TempDir(), ".planmark")
