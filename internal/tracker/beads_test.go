@@ -644,6 +644,66 @@ func TestBeadsWriteSyncManifest(t *testing.T) {
 	}
 }
 
+func TestBeadsAcceptsBDIssueIDsFromBr(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	createCalls := 0
+	runBrCommand = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		switch args[0] {
+		case "list":
+			if createCalls == 0 {
+				return []byte(`[]`), nil
+			}
+			return []byte(`[{"id":"bd-13r","title":"Encode the action system","external_ref":"fv.reconcile.actions"}]`), nil
+		case "create":
+			createCalls++
+			return []byte(`{"id":"bd-13r","title":"Encode the action system"}`), nil
+		case "update":
+			return []byte(`[{"id":"bd-13r","title":"Encode the action system","external_ref":"fv.reconcile.actions"}]`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
+	adapter := NewBeadsAdapter()
+	task := TaskProjection{
+		ID:    "fv.reconcile.actions",
+		Title: "Encode the action system",
+		Provenance: TaskProvenance{
+			NodeRef:    "./PLAN.md|heading|actions#1",
+			Path:       "./PLAN.md",
+			StartLine:  102,
+			EndLine:    137,
+			SourceHash: strings.Repeat("a", 64),
+			CompileID:  strings.Repeat("c", 64),
+		},
+	}
+
+	first, err := adapter.PushTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("first push task: %v", err)
+	}
+	if first.RemoteID != "bd-13r" {
+		t.Fatalf("expected first remote id bd-13r, got %#v", first)
+	}
+
+	second, err := adapter.PushTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("second push task: %v", err)
+	}
+	if second.RemoteID != "bd-13r" {
+		t.Fatalf("expected second remote id bd-13r, got %#v", second)
+	}
+	if createCalls != 1 {
+		t.Fatalf("expected exactly one create call, got %d", createCalls)
+	}
+}
+
 func TestBeadsWriteSyncManifestRespectsLock(t *testing.T) {
 	adapter := NewBeadsAdapter()
 	stateDir := filepath.Join(t.TempDir(), ".planmark")

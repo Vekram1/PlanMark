@@ -363,7 +363,8 @@ func (a *BeadsAdapter) lookupIssueByExternalRef(externalRef string) (beadsIssue,
 }
 
 func isLikelyBeadsIssueID(id string) bool {
-	return strings.HasPrefix(strings.TrimSpace(id), "bead-")
+	trimmed := strings.TrimSpace(id)
+	return strings.HasPrefix(trimmed, "bead-") || strings.HasPrefix(trimmed, "bd-")
 }
 
 func isBeadsIssueNotFound(err error) bool {

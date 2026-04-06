@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -28,12 +29,13 @@ func TestUpdateHelpReturnsZeroAndShowsFlags(t *testing.T) {
 }
 
 func TestUpdateCheckJSONIncludesLatestRelease(t *testing.T) {
+	newerTag := fmt.Sprintf("v%s-next", CLIVersion)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/Vekram1/PlanMark/releases/latest" {
 			t.Fatalf("unexpected request path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v0.1.5","html_url":"https://example.test/releases/v0.1.5"}`))
+		_, _ = w.Write([]byte(`{"tag_name":"` + newerTag + `","html_url":"https://example.test/releases/` + newerTag + `"}`))
 	}))
 	defer server.Close()
 
@@ -57,11 +59,11 @@ func TestUpdateCheckJSONIncludesLatestRelease(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal update json: %v", err)
 	}
-	if payload.Data.CurrentTag != "v0.1.4" {
-		t.Fatalf("expected current tag v0.1.4, got %+v", payload.Data)
+	if payload.Data.CurrentTag != "v"+CLIVersion {
+		t.Fatalf("expected current tag v%s, got %+v", CLIVersion, payload.Data)
 	}
-	if payload.Data.LatestTag != "v0.1.5" {
-		t.Fatalf("expected latest tag v0.1.5, got %+v", payload.Data)
+	if payload.Data.LatestTag != newerTag {
+		t.Fatalf("expected latest tag %s, got %+v", newerTag, payload.Data)
 	}
 	if !payload.Data.UpdateAvailable {
 		t.Fatalf("expected update_available=true, got %+v", payload.Data)
@@ -107,7 +109,7 @@ func TestUpdateUsesInstallerForLatestStableRelease(t *testing.T) {
 func TestUpdateCheckReportsAlreadyCurrentRelease(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v0.1.4","html_url":"https://example.test/releases/v0.1.4"}`))
+		_, _ = w.Write([]byte(`{"tag_name":"v` + CLIVersion + `","html_url":"https://example.test/releases/v` + CLIVersion + `"}`))
 	}))
 	defer server.Close()
 
@@ -128,7 +130,7 @@ func TestUpdateCheckReportsAlreadyCurrentRelease(t *testing.T) {
 	if !strings.Contains(rendered, "update_available: false") {
 		t.Fatalf("expected update check to report false, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "latest_tag: v0.1.4") {
+	if !strings.Contains(rendered, "latest_tag: v"+CLIVersion) {
 		t.Fatalf("expected latest tag in output, got %q", rendered)
 	}
 }
