@@ -95,7 +95,6 @@ type canonicalTaskProjection struct {
 	Title             string                   `json:"title,omitempty"`
 	Horizon           string                   `json:"horizon,omitempty"`
 	Anchor            string                   `json:"anchor,omitempty"`
-	Provenance        TaskProvenance           `json:"provenance"`
 	Dependencies      []string                 `json:"dependencies,omitempty"`
 	Acceptance        []string                 `json:"acceptance,omitempty"`
 	Steps             []TaskProjectionStep     `json:"steps,omitempty"`
@@ -104,10 +103,10 @@ type canonicalTaskProjection struct {
 	ProjectionVersion string                   `json:"projection_version,omitempty"`
 }
 
-// TaskProjectionHash computes a deterministic hash over the full tracker-neutral
-// task projection. This is intentionally broader than any individual adapter's
-// rendered payload so sync planning notices semantic projection changes even
-// before every adapter consumes every field.
+// TaskProjectionHash computes a deterministic hash over the semantic
+// tracker-neutral task projection. Provenance is intentionally excluded so
+// source line churn or slice re-addressing does not force broad tracker updates
+// when the task's rendered meaning is unchanged.
 func TaskProjectionHash(task TaskProjection) (string, error) {
 	canonical := canonicalizeTaskProjection(task)
 	blob, err := json.Marshal(canonical)
@@ -124,7 +123,6 @@ func canonicalizeTaskProjection(task TaskProjection) canonicalTaskProjection {
 		Title:             strings.TrimSpace(task.Title),
 		Horizon:           strings.TrimSpace(task.Horizon),
 		Anchor:            strings.TrimSpace(task.Anchor),
-		Provenance:        normalizedProvenance(task.Provenance),
 		Dependencies:      normalizedOrderedStrings(task.Dependencies),
 		Acceptance:        normalizedOrderedStrings(task.Acceptance),
 		Steps:             normalizedSteps(task.Steps),

@@ -187,17 +187,6 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 			})
 			continue
 		}
-		if provenanceComparable(p.Provenance) && provenanceComparable(d.Provenance) {
-			if mismatch := provenanceMismatchReason(p.Provenance, d.Provenance); mismatch != "" {
-				ops = append(ops, Operation{
-					Kind:     OperationMarkStale,
-					ID:       id,
-					Reason:   "stale provenance mismatch: " + mismatch,
-					Priority: 2,
-				})
-				continue
-			}
-		}
 		if p.ProjectionHash == d.ProjectionHash {
 			ops = append(ops, Operation{
 				Kind:     OperationNoop,
@@ -251,29 +240,4 @@ func PlanSyncOps(desired []DesiredProjection, prior []PriorProjection, deletionP
 
 func ProjectionHashForTask(task tracker.TaskProjection) (string, error) {
 	return tracker.TaskProjectionHash(task)
-}
-
-func provenanceComparable(p tracker.TaskProvenance) bool {
-	return strings.TrimSpace(p.NodeRef) != "" &&
-		strings.TrimSpace(p.Path) != "" &&
-		p.StartLine > 0 &&
-		p.EndLine >= p.StartLine &&
-		strings.TrimSpace(p.SourceHash) != ""
-}
-
-func provenanceMismatchReason(prior tracker.TaskProvenance, desired tracker.TaskProvenance) string {
-	diffs := make([]string, 0, 6)
-	if strings.TrimSpace(prior.NodeRef) != strings.TrimSpace(desired.NodeRef) {
-		diffs = append(diffs, "node_ref")
-	}
-	if strings.TrimSpace(prior.Path) != strings.TrimSpace(desired.Path) {
-		diffs = append(diffs, "path")
-	}
-	if prior.StartLine != desired.StartLine || prior.EndLine != desired.EndLine {
-		diffs = append(diffs, "range")
-	}
-	if strings.TrimSpace(prior.SourceHash) != strings.TrimSpace(desired.SourceHash) {
-		diffs = append(diffs, "source_hash")
-	}
-	return strings.Join(diffs, ",")
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -51,6 +52,7 @@ type BeadsStep struct {
 
 type BeadsAdapter struct {
 	renderProfile      RenderProfile
+	dbPath             string
 	projectionHashByID map[string]string
 	sourceHashByID     map[string]string
 	provenanceByID     map[string]TaskProvenance
@@ -106,6 +108,10 @@ func (a *BeadsAdapter) SetRenderProfile(profile RenderProfile) {
 	if a.renderProfile == "" {
 		a.renderProfile = BeadsRenderProfile
 	}
+}
+
+func (a *BeadsAdapter) SetDBPath(path string) {
+	a.dbPath = strings.TrimSpace(path)
 }
 
 func (a *BeadsAdapter) Capabilities() TrackerCapabilities {
@@ -219,7 +225,7 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 	}
 
 	previousHash, hasPrevious := a.projectionHashByID[task.ID]
-	if hasPrevious && previousHash == currentHash && isLikelyBeadsIssueID(a.remoteIDByID[task.ID]) {
+	if hasPrevious && previousHash == currentHash && isLikelyBeadsIssueID(a.remoteIDByID[task.ID]) && !drifted {
 		return PushResult{
 			RemoteID:   a.remoteIDByID[task.ID],
 			Mutated:    false,
@@ -289,7 +295,7 @@ func (a *BeadsAdapter) createIssueWithExternalRef(externalRef string, title stri
 	if strings.TrimSpace(createDescription) != "" {
 		args = append(args, "--description", createDescription)
 	}
-	output, err := runBrCommand(args...)
+	output, err := a.runBr(args...)
 	if err != nil {
 		return beadsIssue{}, fmt.Errorf("br create: %w", err)
 	}
@@ -313,7 +319,7 @@ func (a *BeadsAdapter) updateIssueWithExternalRef(id string, externalRef string,
 		args = append(args, "--external-ref", externalRef)
 	}
 	args = append(args, "--json")
-	output, err := runBrCommand(args...)
+	output, err := a.runBr(args...)
 	if err != nil {
 		return beadsIssue{}, fmt.Errorf("br update %s: %w", id, err)
 	}
@@ -328,7 +334,7 @@ func (a *BeadsAdapter) updateIssueWithExternalRef(id string, externalRef string,
 }
 
 func (a *BeadsAdapter) lookupIssue(id string) (beadsIssue, error) {
-	output, err := runBrCommand("show", id, "--json")
+	output, err := a.runBr("show", id, "--json")
 	if err != nil {
 		return beadsIssue{}, fmt.Errorf("br show %s: %w", id, err)
 	}
@@ -346,7 +352,7 @@ func (a *BeadsAdapter) lookupIssueByExternalRef(externalRef string) (beadsIssue,
 	if strings.TrimSpace(externalRef) == "" {
 		return beadsIssue{}, nil
 	}
-	output, err := runBrCommand("list", "--all", "--json")
+	output, err := a.runBr("list", "--all", "--json")
 	if err != nil {
 		return beadsIssue{}, fmt.Errorf("br list: %w", err)
 	}
@@ -362,8 +368,22 @@ func (a *BeadsAdapter) lookupIssueByExternalRef(externalRef string) (beadsIssue,
 	return beadsIssue{}, nil
 }
 
+func (a *BeadsAdapter) runBr(args ...string) ([]byte, error) {
+	if strings.TrimSpace(a.dbPath) == "" {
+		return runBrCommand(args...)
+	}
+	if err := os.MkdirAll(filepath.Dir(a.dbPath), 0o755); err != nil {
+		return nil, fmt.Errorf("prepare beads db dir: %w", err)
+	}
+	withDB := make([]string, 0, len(args)+2)
+	withDB = append(withDB, args[0], "--db", a.dbPath)
+	withDB = append(withDB, args[1:]...)
+	return runBrCommand(withDB...)
+}
+
 func isLikelyBeadsIssueID(id string) bool {
-	return strings.HasPrefix(strings.TrimSpace(id), "bead-")
+	trimmed := strings.TrimSpace(id)
+	return strings.HasPrefix(trimmed, "bead-") || strings.HasPrefix(trimmed, "bd-")
 }
 
 func isBeadsIssueNotFound(err error) bool {

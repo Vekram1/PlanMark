@@ -162,6 +162,48 @@ func TestProjectionHashForTaskIncludesStructuredProjectionFields(t *testing.T) {
 	}
 }
 
+func TestProjectionHashForTaskIgnoresProvenanceOnlyChanges(t *testing.T) {
+	base := tracker.TaskProjection{
+		ID:      "task.provenance",
+		Title:   "Semantic task",
+		Horizon: "now",
+		Provenance: tracker.TaskProvenance{
+			NodeRef:    "plan.md|heading|old#1",
+			Path:       "plan.md",
+			StartLine:  10,
+			EndLine:    18,
+			SourceHash: strings.Repeat("a", 64),
+			CompileID:  strings.Repeat("b", 64),
+		},
+		Dependencies: []string{"dep.one"},
+		Acceptance:   []string{"cmd:go test ./..."},
+		Sections: []tracker.TaskProjectionSection{
+			{Key: "why", Title: "Why", Body: []string{"Keep sync focused on semantic drift."}},
+		},
+	}
+	shifted := base
+	shifted.Provenance = tracker.TaskProvenance{
+		NodeRef:    "plan.md|heading|new#1",
+		Path:       "plan.md",
+		StartLine:  25,
+		EndLine:    33,
+		SourceHash: strings.Repeat("c", 64),
+		CompileID:  strings.Repeat("d", 64),
+	}
+
+	baseHash, err := ProjectionHashForTask(base)
+	if err != nil {
+		t.Fatalf("hash base projection: %v", err)
+	}
+	shiftedHash, err := ProjectionHashForTask(shifted)
+	if err != nil {
+		t.Fatalf("hash shifted projection: %v", err)
+	}
+	if baseHash != shiftedHash {
+		t.Fatalf("expected provenance-only changes to hash the same: %q vs %q", baseHash, shiftedHash)
+	}
+}
+
 func TestPlanSyncOpsDuplicateDesiredIsDeterministicAndConflicted(t *testing.T) {
 	prior := []PriorProjection{{ID: "task.same", ProjectionHash: "h.prior"}}
 
@@ -200,7 +242,7 @@ func TestPlanSyncOpsDuplicateDesiredIsDeterministicAndConflicted(t *testing.T) {
 	}
 }
 
-func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
+func TestBeadProvenanceMismatchUpdatesWhenSemanticHashChanges(t *testing.T) {
 	desired := []DesiredProjection{
 		{
 			ID:             "task.same",
@@ -234,18 +276,18 @@ func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
 	if len(ops) != 1 {
 		t.Fatalf("expected 1 operation, got %#v", ops)
 	}
-	if ops[0].Kind != OperationMarkStale {
-		t.Fatalf("expected mark-stale op, got %#v", ops[0])
+	if ops[0].Kind != OperationUpdate {
+		t.Fatalf("expected update op, got %#v", ops[0])
 	}
 	if ops[0].ID != "task.same" {
 		t.Fatalf("expected task.same op, got %#v", ops[0])
 	}
-	if ops[0].Reason == "" || ops[0].Reason == "present in prior projection set but missing in desired" {
-		t.Fatalf("expected explicit provenance mismatch reason, got %#v", ops[0])
+	if ops[0].Reason != "projection hash changed" {
+		t.Fatalf("expected projection hash reason, got %#v", ops[0])
 	}
 }
 
-func TestBeadCompileIDDifferenceDoesNotMarkStale(t *testing.T) {
+func TestBeadProvenanceOnlyDifferenceDoesNotForceUpdate(t *testing.T) {
 	desired := []DesiredProjection{
 		{
 			ID:             "task.same",
@@ -280,7 +322,7 @@ func TestBeadCompileIDDifferenceDoesNotMarkStale(t *testing.T) {
 		t.Fatalf("expected 1 operation, got %#v", ops)
 	}
 	if ops[0].Kind != OperationNoop {
-		t.Fatalf("expected noop when only compile id differs, got %#v", ops[0])
+		t.Fatalf("expected noop when only provenance differs, got %#v", ops[0])
 	}
 }
 
@@ -474,7 +516,7 @@ func expectedSingleIDOperationKind(desiredMode, priorMode string) OperationKind 
 		case "duplicate", "missing-hash":
 			return OperationConflict
 		case "provenance-mismatch":
-			return OperationMarkStale
+			return OperationUpdate
 		case "same":
 			return OperationNoop
 		case "different":

@@ -220,7 +220,8 @@ Notes:
 - The current proven adapters are `beads`, a GitHub Issues proof adapter, and a Linear proof adapter.
 - Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
 - The GitHub and Linear proof adapters render deterministic markdown issue title/body payloads from the same tracker-neutral projection and render-profile layer.
-- Sync planning hashes the full canonical tracker-neutral projection, so reserved fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
+- Sync planning hashes the canonical semantic tracker-neutral projection, so reserved semantic fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
+- Provenance remains part of the rendered/audited tracker payload, but provenance-only movement such as line-range churn or source slice re-addressing does not by itself force routine tracker updates for a stable task identity.
 - The staged adapter roadmap is now:
   - markdown-issue adapters first (`linear`, `jira` phase 1 basic issue rendering)
   - then agentic trackers with native machine-oriented child work (`ticket`, `trekker`, `beans`)

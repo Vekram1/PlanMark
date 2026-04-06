@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CLIVersion = "0.1.2"
+	CLIVersion = "0.1.9"
 )
 
 type supportedPolicy struct {
@@ -46,6 +46,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runHelp(args[1:], stdout, stderr)
 	case "version":
 		return runVersion(args[1:], stdout, stderr)
+	case "update":
+		return runUpdate(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stdout, stderr)
 	case "compile":
@@ -100,6 +102,8 @@ func runHelp(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch target {
 	case "version":
 		return runVersion([]string{"--help"}, stdout, stdout)
+	case "update":
+		return runUpdate([]string{"--help"}, stdout, stdout)
 	case "init":
 		return runInit([]string{"--help"}, stdout, stdout)
 	case "compile":
@@ -150,6 +154,7 @@ func renderRootHelp(w io.Writer) {
 		"",
 		"Canonical commands:",
 		"  version         Show CLI, schema, and policy support information",
+		"  update          Check for and install the latest released PlanMark build",
 		"  init            Initialize repo-local PlanMark state and starter files",
 		"  compile         Compile PLAN.md into deterministic IR JSON",
 		"  doctor          Check plan validity and readiness under a strictness profile",

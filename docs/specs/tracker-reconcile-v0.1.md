@@ -81,7 +81,8 @@ The reconcile policy is intentionally tracker-neutral even when the first implem
   - ordered execution `steps`
   - ordered `evidence_node_refs`
   - provenance/source mapping and acceptance digest
-- Sync planning hashes the full canonical `TaskProjectionV2`, including reserved projection fields such as structured `sections` and evidence `kind`, so semantic projection changes are still detected before every adapter renders every field.
+- Sync planning hashes the canonical semantic `TaskProjectionV2`, including reserved semantic fields such as structured `sections` and evidence `kind`, so semantic projection changes are still detected before every adapter renders every field.
+- Provenance fields (`node_ref`, source path/range, source hash, compile id) remain visible in tracker payloads and manifests for audit/debugging, but they do not by themselves force routine `update` or `mark_stale` operations for an otherwise unchanged task identity.
 
 Current capability descriptor categories:
 
