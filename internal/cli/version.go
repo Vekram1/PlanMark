@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CLIVersion = "0.1.7"
+	CLIVersion = "0.1.8"
 )
 
 type supportedPolicy struct {
