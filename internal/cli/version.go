@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/policy"
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	CLIVersion = "0.1.0-dev"
+	CLIVersion = "0.1.0"
 )
 
 type supportedPolicy struct {
@@ -36,11 +37,13 @@ type exitCodeInfo struct {
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: plan <command> [flags]")
-		return protocol.ExitUsageError
+		renderRootHelp(stdout)
+		return protocol.ExitSuccess
 	}
 
-	switch args[0] {
+	switch normalizeCommandToken(args[0]) {
+	case "help":
+		return runHelp(args[1:], stdout, stderr)
 	case "version":
 		return runVersion(args[1:], stdout, stderr)
 	case "init":
@@ -76,8 +79,121 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 	case "ai":
 		return runAI(args[1:], stdout, stderr)
 	default:
+		if isHelpToken(args[0]) {
+			renderRootHelp(stdout)
+			return protocol.ExitSuccess
+		}
 		fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
+		fmt.Fprintln(stderr, "")
+		renderRootHelp(stderr)
 		return protocol.ExitUsageError
+	}
+}
+
+func runHelp(args []string, stdout io.Writer, stderr io.Writer) int {
+	if len(args) == 0 {
+		renderRootHelp(stdout)
+		return protocol.ExitSuccess
+	}
+
+	target := normalizeCommandToken(args[0])
+	switch target {
+	case "version":
+		return runVersion([]string{"--help"}, stdout, stdout)
+	case "init":
+		return runInit([]string{"--help"}, stdout, stdout)
+	case "compile":
+		return runCompile([]string{"--help"}, stdout, stdout)
+	case "doctor":
+		return runDoctor([]string{"--help"}, stdout, stdout)
+	case "context":
+		return runContext([]string{"--help"}, stdout, stdout)
+	case "open":
+		return runOpen([]string{"--help"}, stdout, stdout)
+	case "handoff":
+		return runHandoff([]string{"--help"}, stdout, stdout)
+	case "explain":
+		return runExplain([]string{"--help"}, stdout, stdout)
+	case "sync":
+		return runSync([]string{"--help"}, stdout, stdout)
+	case "changes":
+		return runChanges([]string{"--help"}, stdout, stdout)
+	case "propose-change":
+		return runProposeChange([]string{"--help"}, stdout, stdout)
+	case "apply-change":
+		return runApplyChange([]string{"--help"}, stdout, stdout)
+	case "pack":
+		return runPack([]string{"--help"}, stdout, stdout)
+	case "query":
+		return runQuery([]string{"--help"}, stdout, stdout)
+	case "id":
+		return runID([]string{"--help"}, stdout, stdout)
+	case "verify-accept":
+		return runVerifyAccept([]string{"--help"}, stdout, stdout)
+	case "ai":
+		return runAI([]string{"--help"}, stdout, stdout)
+	default:
+		fmt.Fprintf(stderr, "unknown help topic: %s\n", args[0])
+		fmt.Fprintln(stderr, "")
+		renderRootHelp(stderr)
+		return protocol.ExitUsageError
+	}
+}
+
+func renderRootHelp(w io.Writer) {
+	lines := []string{
+		"PlanMark turns PLAN.md into deterministic planning artifacts.",
+		"",
+		"Usage:",
+		"  planmark <command> [flags]",
+		"  plan <command> [flags]",
+		"",
+		"Canonical commands:",
+		"  version         Show CLI, schema, and policy support information",
+		"  init            Initialize repo-local PlanMark state and starter files",
+		"  compile         Compile PLAN.md into deterministic IR JSON",
+		"  doctor          Check plan validity and readiness under a strictness profile",
+		"  query           List tasks with optional readiness and horizon filters",
+		"  context         Build a deterministic task context packet",
+		"  open            Show exact source scope for a task or node reference",
+		"  explain         Explain why a task looks the way it does",
+		"  handoff         Build an agent-oriented handoff packet",
+		"  changes         Compare current plan state against prior compile or git ref",
+		"  pack            Export plan and packets into a portable pack",
+		"  sync            Project tasks into a tracker without making it canonical",
+		"  propose-change  Produce a deterministic plan delta proposal",
+		"  apply-change    Apply a deterministic plan delta",
+		"  id              Generate a deterministic task id from a title",
+		"  verify-accept   Run an explicit @accept command and record a receipt",
+		"",
+		"Assistive commands:",
+		"  ai              Non-canonical AI helpers for drafting and suggestion flows",
+		"",
+		"Help:",
+		"  planmark help <command>",
+		"  plan help <command>",
+		"  planmark --help",
+		"  plan --help",
+		"",
+		"Notes:",
+		"  PLAN.md remains canonical.",
+		"  compile/doctor/context/open/explain/handoff/sync are intended to remain deterministic and offline-safe.",
+	}
+	for _, line := range lines {
+		fmt.Fprintln(w, line)
+	}
+}
+
+func normalizeCommandToken(raw string) string {
+	return strings.TrimSpace(strings.ToLower(raw))
+}
+
+func isHelpToken(raw string) bool {
+	switch normalizeCommandToken(filepath.Base(raw)) {
+	case "-h", "--help":
+		return true
+	default:
+		return false
 	}
 }
 

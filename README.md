@@ -26,30 +26,32 @@ You do not need a separate DSL. PlanMark uses normal Markdown plus a small amoun
 Build from a local checkout:
 
 ```bash
-go build -o ./bin/plan ./cmd/plan
+go build -o ./bin/planmark ./cmd/planmark
 export PATH="$PWD/bin:$PATH"
-plan version --format json
+planmark version --format json
 ```
 
 Install with the project script on macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
-plan version --format json
+planmark version --format json
 ```
 
-If `plan` is not on your shell path after install:
+If `planmark` is not on your shell path after install:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+The installer places `planmark` on your path and also installs `plan` as a compatibility alias by default.
 
 ## First 10 Minutes
 
 Initialize the repo:
 
 ```bash
-plan init --dir . --format text
+planmark init --dir . --format text
 ```
 
 This creates repo-local PlanMark state under `.planmark/` and adds starter files such as `PLAN.md`, `.planmark.yaml`, and a managed PlanMark section in `AGENTS.md` when missing.
@@ -57,19 +59,19 @@ This creates repo-local PlanMark state under `.planmark/` and adds starter files
 Compile the initial plan:
 
 ```bash
-plan compile --plan PLAN.md --out .planmark/tmp/plan.json
+planmark compile --plan PLAN.md --out .planmark/tmp/plan.json
 ```
 
 Check the plan for readiness issues:
 
 ```bash
-plan doctor --plan PLAN.md --profile loose --format rich
+planmark doctor --plan PLAN.md --profile loose --format rich
 ```
 
 List tasks:
 
 ```bash
-plan query --plan PLAN.md --format text
+planmark query --plan PLAN.md --format text
 ```
 
 If those commands work, the repo is ready for agent-facing task context.
@@ -120,41 +122,48 @@ Use heading tasks when you want rationale, examples, risk notes, or a scoped exe
 Compile to deterministic IR:
 
 ```bash
-plan compile --plan PLAN.md --out .planmark/tmp/plan.json
+planmark compile --plan PLAN.md --out .planmark/tmp/plan.json
 ```
 
 Check health with increasing strictness:
 
 ```bash
-plan doctor --plan PLAN.md --profile loose --format rich
-plan doctor --plan PLAN.md --profile build --format rich
-plan doctor --plan PLAN.md --profile exec --format rich
+planmark doctor --plan PLAN.md --profile loose --format rich
+planmark doctor --plan PLAN.md --profile build --format rich
+planmark doctor --plan PLAN.md --profile exec --format rich
 ```
 
 Query tasks:
 
 ```bash
-plan query --plan PLAN.md --format text
+planmark query --plan PLAN.md --format text
 ```
 
 Get agent-usable task context:
 
 ```bash
-plan context api.migrate --plan PLAN.md --level L0 --format json
-plan open api.migrate --plan PLAN.md --format json
-plan explain api.migrate --plan PLAN.md --format rich
-plan handoff api.migrate --plan PLAN.md --format json
+planmark context api.migrate --plan PLAN.md --level L0 --format json
+planmark open api.migrate --plan PLAN.md --format json
+planmark explain api.migrate --plan PLAN.md --format rich
+planmark handoff api.migrate --plan PLAN.md --format json
 ```
 
 Recommended escalation path for agents:
 
-1. `plan context <id> --level L0`
-2. `plan open <id|node-ref>`
-3. `plan explain <id>`
-4. `plan context <id> --level L1`
-5. `plan context <id> --level L2`
+1. `planmark context <id> --level L0`
+2. `planmark open <id|node-ref>`
+3. `planmark explain <id>`
+4. `planmark context <id> --level L1`
+5. `planmark context <id> --level L2`
 
 That keeps context small while preserving deterministic traceability back to the plan source.
+
+How to choose the level in practice:
+
+- Start with `L0` by default. `L0` already includes the task's identity, dependencies, acceptance targets, steps, evidence references, and the exact source slice from `PLAN.md` via `source_path`, `start_line`, `end_line`, `slice_hash`, and `slice_text`.
+- Escalate to `L1` only when the task includes pin-backed references and you need the referenced file or range extracts in addition to the task's own plan slice.
+- Escalate to `L2` only when you need dependency-closure reasoning, such as understanding upstream tasks that must be completed or inspected first.
+- Treat context as a progressive budget. Do not default to `L2` for routine execution work, because it pulls in adjacent task context that is often unnecessary.
 
 ## Tracker Sync
 
@@ -163,15 +172,15 @@ Trackers are projection layers. `PLAN.md` remains canonical.
 Preview sync without mutating the tracker:
 
 ```bash
-plan sync beads --plan PLAN.md --dry-run --format json
-plan sync github --plan PLAN.md --dry-run --format json
-plan sync linear --plan PLAN.md --dry-run --format json
+planmark sync beads --plan PLAN.md --dry-run --format json
+planmark sync github --plan PLAN.md --dry-run --format json
+planmark sync linear --plan PLAN.md --dry-run --format json
 ```
 
 Or select the adapter explicitly:
 
 ```bash
-plan sync --plan PLAN.md --adapter github --profile compact --dry-run --format json
+planmark sync --plan PLAN.md --adapter github --profile compact --dry-run --format json
 ```
 
 Built-in render profiles:
@@ -196,18 +205,18 @@ tracker:
 ## Canonical vs Non-Canonical
 
 Canonical deterministic commands:
-- `plan compile`
-- `plan doctor`
-- `plan context`
-- `plan open`
-- `plan explain`
-- `plan handoff`
-- `plan sync`
+- `planmark compile`
+- `planmark doctor`
+- `planmark context`
+- `planmark open`
+- `planmark explain`
+- `planmark handoff`
+- `planmark sync`
 
 These are intended to stay deterministic and offline-safe.
 
 Optional assistive commands live under:
-- `plan ai ...`
+- `planmark ai ...`
 
 Use AI helpers as drafting support, not as the source of truth.
 
@@ -226,16 +235,17 @@ The goal is not to formalize everything. The goal is to make each task executabl
 ## Common Commands
 
 ```bash
-plan version --format json
-plan init --dir . --format text
-plan compile --plan PLAN.md --out .planmark/tmp/plan.json
-plan doctor --plan PLAN.md --profile loose --format rich
-plan query --plan PLAN.md --format text
-plan context <id> --plan PLAN.md --level L0 --format json
-plan open <id|node-ref> --plan PLAN.md --format json
-plan explain <id> --plan PLAN.md --format rich
-plan handoff <id|node-ref> --plan PLAN.md --format json
-plan sync [beads|github|linear] --plan PLAN.md --dry-run --format json
+planmark --help
+planmark version --format json
+planmark init --dir . --format text
+planmark compile --plan PLAN.md --out .planmark/tmp/plan.json
+planmark doctor --plan PLAN.md --profile loose --format rich
+planmark query --plan PLAN.md --format text
+planmark context <id> --plan PLAN.md --level L0 --format json
+planmark open <id|node-ref> --plan PLAN.md --format json
+planmark explain <id> --plan PLAN.md --format rich
+planmark handoff <id|node-ref> --plan PLAN.md --format json
+planmark sync [beads|github|linear] --plan PLAN.md --dry-run --format json
 ```
 
 ## Development

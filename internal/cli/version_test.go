@@ -95,3 +95,36 @@ func TestVersionInvalidFormatReturnsUsageError(t *testing.T) {
 		t.Fatalf("expected invalid format error message; stderr=%q", errOut.String())
 	}
 }
+
+func TestRootHelpReturnsZeroAndShowsCommandGroups(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	exit := Run([]string{"--help"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0 for root help, got %d stderr=%q", exit, errOut.String())
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "Canonical commands:") {
+		t.Fatalf("expected root help to list canonical commands, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "planmark <command> [flags]") {
+		t.Fatalf("expected root help to mention planmark usage, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "plan <command> [flags]") {
+		t.Fatalf("expected root help to mention legacy plan usage, got %q", rendered)
+	}
+}
+
+func TestHelpCommandDelegatesToSubcommandHelp(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	exit := Run([]string{"help", "version"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0 for help version, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "output format: text|json") {
+		t.Fatalf("expected delegated version help output, got %q", out.String())
+	}
+}

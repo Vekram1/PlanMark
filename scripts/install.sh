@@ -2,11 +2,12 @@
 set -euo pipefail
 
 REPO_SLUG="${PLANMARK_REPO:-Vekram1/PlanMark}"
-REPO_URL="${PLANMARK_REPO_URL:-https://github.com/${REPO_SLUG}.git}"
 INSTALL_DIR="${PLANMARK_INSTALL_DIR:-$HOME/.local/bin}"
-AUTO_INSTALL_DEPS="${PLANMARK_AUTO_INSTALL_DEPS:-1}"
 PLANMARK_CHANNEL="${PLANMARK_CHANNEL:-stable}"
 PLANMARK_REF="${PLANMARK_REF:-}"
+PLANMARK_BIN_NAME="${PLANMARK_BIN_NAME:-planmark}"
+PLANMARK_LEGACY_ALIAS="${PLANMARK_LEGACY_ALIAS:-1}"
+GITHUB_BASE_URL="${PLANMARK_GITHUB_BASE_URL:-https://github.com/${REPO_SLUG}}"
 TMP_DIR=""
 
 cleanup() {
@@ -32,84 +33,13 @@ detect_os() {
   esac
 }
 
-try_install_with_brew() {
-  if ! has_cmd brew; then
-    return 1
-  fi
-  log "Installing missing dependency with Homebrew: $1"
-  brew install "$1"
-}
-
-try_install_with_apt() {
-  if ! has_cmd apt-get; then
-    return 1
-  fi
-  log "Installing missing dependency with apt-get: $1"
-  sudo apt-get update
-  sudo apt-get install -y "$1"
-}
-
-try_install_with_dnf() {
-  if ! has_cmd dnf; then
-    return 1
-  fi
-  log "Installing missing dependency with dnf: $1"
-  sudo dnf install -y "$1"
-}
-
-try_install_with_yum() {
-  if ! has_cmd yum; then
-    return 1
-  fi
-  log "Installing missing dependency with yum: $1"
-  sudo yum install -y "$1"
-}
-
 install_dep_or_fail() {
   local dep="$1"
-  local os_name="$2"
   if has_cmd "$dep"; then
     return 0
   fi
-
-  if [[ "${AUTO_INSTALL_DEPS}" == "1" ]]; then
-    case "${os_name}" in
-      darwin)
-        case "$dep" in
-          go) try_install_with_brew go || true ;;
-          git) try_install_with_brew git || true ;;
-          curl) try_install_with_brew curl || true ;;
-          tar) try_install_with_brew gnu-tar || true ;;
-        esac
-        ;;
-      linux)
-        case "$dep" in
-          go)
-            try_install_with_apt golang-go || try_install_with_dnf golang || try_install_with_yum golang || true
-            ;;
-          git)
-            try_install_with_apt git || try_install_with_dnf git || try_install_with_yum git || true
-            ;;
-          curl)
-            try_install_with_apt curl || try_install_with_dnf curl || try_install_with_yum curl || true
-            ;;
-          tar)
-            try_install_with_apt tar || try_install_with_dnf tar || try_install_with_yum tar || true
-            ;;
-        esac
-        ;;
-    esac
-  fi
-
-  if ! has_cmd "$dep"; then
-    log "Missing required dependency: ${dep}"
-    if [[ "${os_name}" == "darwin" ]]; then
-      log "Install manually (macOS): brew install ${dep}"
-    elif [[ "${os_name}" == "linux" ]]; then
-      log "Install manually (Linux): sudo apt-get install -y ${dep}  # or dnf/yum equivalent"
-    fi
-    exit 1
-  fi
+  log "Missing required dependency: ${dep}"
+  exit 1
 }
 
 resolve_target_ref() {
@@ -149,29 +79,39 @@ main() {
   fi
 
   log "Checking dependencies..."
-  install_dep_or_fail curl "${os_name}"
-  install_dep_or_fail tar "${os_name}"
-  install_dep_or_fail git "${os_name}"
-  install_dep_or_fail go "${os_name}"
+  install_dep_or_fail curl
+  install_dep_or_fail tar
 
   target_ref="$(resolve_target_ref)"
+  arch="$(uname -m)"
+  case "${arch}" in
+    x86_64|amd64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *)
+      log "Unsupported architecture: ${arch}"
+      exit 1
+      ;;
+  esac
 
   TMP_DIR="$(mktemp -d)"
-  log "Cloning ${REPO_URL} (ref=${target_ref})..."
-  git clone --depth 1 --branch "${target_ref}" "${REPO_URL}" "${TMP_DIR}/planmark"
-
-  log "Building plan binary..."
-  (
-    cd "${TMP_DIR}/planmark"
-    go build -trimpath -ldflags "-s -w" -o "${TMP_DIR}/plan" ./cmd/plan
-  )
+  local archive_name
+  archive_name="planmark_${target_ref#v}_${os_name}_${arch}.tar.gz"
+  local download_url
+  download_url="${GITHUB_BASE_URL}/releases/download/${target_ref}/${archive_name}"
+  log "Downloading ${download_url}"
+  curl -fsSL "${download_url}" -o "${TMP_DIR}/${archive_name}"
+  tar -xzf "${TMP_DIR}/${archive_name}" -C "${TMP_DIR}"
 
   mkdir -p "${INSTALL_DIR}"
-  cp "${TMP_DIR}/plan" "${INSTALL_DIR}/plan"
-  chmod +x "${INSTALL_DIR}/plan"
+  cp "${TMP_DIR}/planmark" "${INSTALL_DIR}/${PLANMARK_BIN_NAME}"
+  chmod +x "${INSTALL_DIR}/${PLANMARK_BIN_NAME}"
+  if [[ "${PLANMARK_LEGACY_ALIAS}" == "1" ]]; then
+    cp "${TMP_DIR}/planmark" "${INSTALL_DIR}/plan"
+    chmod +x "${INSTALL_DIR}/plan"
+  fi
 
-  log "Installed: ${INSTALL_DIR}/plan"
-  if "${INSTALL_DIR}/plan" version --format text >/dev/null 2>&1; then
+  log "Installed: ${INSTALL_DIR}/${PLANMARK_BIN_NAME}"
+  if "${INSTALL_DIR}/${PLANMARK_BIN_NAME}" version --format text >/dev/null 2>&1; then
     log "Verification: OK"
   else
     log "Verification failed: installed binary did not execute as expected."
@@ -185,8 +125,9 @@ main() {
 
   log "Next steps:"
   log "  1) cd <your-project>"
-  log "  2) plan init --dir . --format text"
-  log "  3) plan compile --plan PLAN.md --out .planmark/tmp/plan.json"
+  log "  2) ${PLANMARK_BIN_NAME} --help"
+  log "  3) ${PLANMARK_BIN_NAME} init --dir . --format text"
+  log "  4) ${PLANMARK_BIN_NAME} compile --plan PLAN.md --out .planmark/tmp/plan.json"
   log "Installed release/ref: ${target_ref}"
 }
 
