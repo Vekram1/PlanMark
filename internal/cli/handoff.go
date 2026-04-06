@@ -57,7 +57,7 @@ func runHandoff(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(filteredArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

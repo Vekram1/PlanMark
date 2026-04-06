@@ -54,6 +54,10 @@ type beadsSyncAdapter interface {
 	Capabilities() tracker.TrackerCapabilities
 }
 
+type syncManifestReconciler interface {
+	ReconcileSyncManifest(ctx context.Context, manifest tracker.SyncManifest) (tracker.SyncManifest, error)
+}
+
 var newBeadsSyncAdapter = func() beadsSyncAdapter {
 	return tracker.NewBeadsAdapter()
 }
@@ -104,8 +108,8 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
-	stateDir := fs.String("state-dir", ".planmark", "path to planmark local state directory")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
+	stateDir := fs.String("state-dir", ".planmark", "path to local PlanMark `state-dir`")
 	adapterFlag := fs.String("adapter", "", "tracker adapter: beads|github|linear")
 	profileFlag := fs.String("profile", "", "render profile: default|compact|agentic|handoff")
 	deletionPolicy := fs.String("deletion-policy", string(syncplanner.DefaultDeletionPolicy()), "deletion policy for PLAN removals: mark-stale|close|detach|delete")
@@ -196,10 +200,18 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	if resolvedStateDir == "" {
 		resolvedStateDir = ".planmark"
 	}
+	ctx := context.Background()
 	priorManifest, err := loadSyncManifest(syncManifestPath(resolvedStateDir, resolvedAdapter))
 	if err != nil {
 		fmt.Fprintf(stderr, "load sync manifest: %v\n", err)
 		return protocol.ExitInternalError
+	}
+	if reconciler, ok := adapter.(syncManifestReconciler); ok {
+		priorManifest, err = reconciler.ReconcileSyncManifest(ctx, priorManifest)
+		if err != nil {
+			fmt.Fprintf(stderr, "reconcile sync manifest: %v\n", err)
+			return protocol.ExitInternalError
+		}
 	}
 	adapter.SeedFromSyncManifest(priorManifest)
 
@@ -214,7 +226,6 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	desired := make([]syncplanner.DesiredProjection, 0, len(compiled.Semantic.Tasks))
 	prior := make([]syncplanner.PriorProjection, 0, len(priorManifest.Entries))
 
-	ctx := context.Background()
 	for _, task := range compiled.Semantic.Tasks {
 		node, ok := nodesByRef[task.NodeRef]
 		if !ok {

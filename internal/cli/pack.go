@@ -22,11 +22,11 @@ type packOutput struct {
 func runPack(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("pack", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	idsArg := fs.String("ids", "", "comma-separated task ids")
 	horizon := fs.String("horizon", "", "task horizon filter: now|next")
 	levelArg := fs.String("level", "L0", "context level(s): L0|L1|L2 or comma-separated")
-	outPath := fs.String("out", "", "output directory or .tar.gz path")
+	outPath := fs.String("out", "", "write pack to `output-path` (directory or .tar.gz)")
 	format := fs.String("format", "json", "output format: text|json")
 	stateDir := fs.String("state-dir", "", "optional state directory")
 	if err := fs.Parse(args); err != nil {

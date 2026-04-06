@@ -86,7 +86,7 @@ func runAISuggestAccept(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("ai suggest-accept", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(filteredArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -264,7 +264,7 @@ type applyFixResult struct {
 func runAISuggestFix(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ai suggest-fix", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	format := fs.String("format", "text", "output format: text|json")
 	profile := fs.String("profile", "build", "doctor profile: loose|build|exec")
 	limit := fs.Int("limit", 20, "max repair suggestions to emit")
@@ -447,7 +447,7 @@ func runAIApplyFix(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("ai apply-fix", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	format := fs.String("format", "text", "output format: text|json")
 	profile := fs.String("profile", "build", "doctor profile: loose|build|exec")
 	limit := fs.Int("limit", 20, "max repair suggestions to emit")

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -228,6 +229,20 @@ func TestBuildBeadsStepsFromRenderedPreservesNodeRefsForNativeSteps(t *testing.T
 }
 
 func TestBeadsPushIdempotentOnProjectionHash(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+	runBrCommand = func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "list":
+			return []byte(`[]`), nil
+		case "create":
+			return []byte(`{"id":"bead-101","title":"Idempotent push check"}`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()
 
@@ -331,6 +346,20 @@ func TestBeadsPullUsesLastSeenRuntimeHash(t *testing.T) {
 }
 
 func TestBeadsDetectProjectionDriftBySourceHashMismatch(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+	runBrCommand = func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "list":
+			return []byte(`[]`), nil
+		case "create":
+			return []byte(`{"id":"bead-151","title":"Detect source hash drift"}`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()
 	task := TaskProjection{
@@ -375,6 +404,22 @@ func TestBeadsDetectProjectionDriftBySourceHashMismatch(t *testing.T) {
 }
 
 func TestBeadsPushSurfacesDriftDiagnostic(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+	runBrCommand = func(args ...string) ([]byte, error) {
+		switch args[0] {
+		case "list":
+			return []byte(`[]`), nil
+		case "create":
+			return []byte(`{"id":"bead-201","title":"Push drift diagnostic"}`), nil
+		case "update":
+			return []byte(`[{"id":"bead-201","title":"Push drift diagnostic"}]`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()
 	task := TaskProjection{
@@ -407,7 +452,114 @@ func TestBeadsPushSurfacesDriftDiagnostic(t *testing.T) {
 	}
 }
 
+func TestBeadsReconcileSyncManifestDropsMissingRemoteEntries(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+	runBrCommand = func(args ...string) ([]byte, error) {
+		if len(args) < 2 || args[0] != "show" {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		if args[1] == "bead-keep" {
+			return []byte(`[{"id":"bead-keep","title":"Kept issue"}]`), nil
+		}
+		return nil, fmt.Errorf("issue not found")
+	}
+
+	adapter := NewBeadsAdapter()
+	manifest := BeadsSyncManifest{
+		SchemaVersion: BeadsManifestSchemaVersionV01,
+		Entries: []BeadsManifestEntry{
+			{ID: "fixture.task.keep", RemoteID: "bead-keep", ProjectionHash: "hash-a"},
+			{ID: "fixture.task.drop", RemoteID: "bead-missing", ProjectionHash: "hash-b"},
+			{ID: "fixture.task.synthetic", RemoteID: "beads:fixture.task.synthetic", ProjectionHash: "hash-c"},
+		},
+	}
+
+	reconciled, err := adapter.ReconcileSyncManifest(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("reconcile sync manifest: %v", err)
+	}
+	if len(reconciled.Entries) != 1 {
+		t.Fatalf("expected one surviving manifest entry, got %#v", reconciled.Entries)
+	}
+	if reconciled.Entries[0].ID != "fixture.task.keep" {
+		t.Fatalf("expected keep entry to survive, got %#v", reconciled.Entries)
+	}
+}
+
+func TestBeadsPushCreatesRealIssueAndStoresRemoteID(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+	var sawCreate bool
+	runBrCommand = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		if args[0] == "list" {
+			return []byte(`[]`), nil
+		}
+		if args[0] != "create" {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		sawCreate = true
+		if !slices.Contains(args, "--description") {
+			t.Fatalf("expected create to include description, got %#v", args)
+		}
+		return []byte(`{"id":"bead-301","title":"Create issue"}`), nil
+	}
+
+	adapter := NewBeadsAdapter()
+	task := TaskProjection{
+		ID:    "fixture.task.create",
+		Title: "Create issue",
+		Provenance: TaskProvenance{
+			Path:       "testdata/plans/mixed.md",
+			StartLine:  3,
+			EndLine:    5,
+			SourceHash: strings.Repeat("3", 64),
+		},
+		Acceptance: []string{"cmd:go test ./..."},
+	}
+
+	result, err := adapter.PushTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("push task: %v", err)
+	}
+	if !sawCreate {
+		t.Fatalf("expected br create to be called")
+	}
+	if result.RemoteID != "bead-301" {
+		t.Fatalf("expected remote id bead-301, got %#v", result)
+	}
+	manifest := adapter.BuildSyncManifest()
+	if len(manifest.Entries) != 1 || manifest.Entries[0].RemoteID != "bead-301" {
+		t.Fatalf("expected manifest to store real bead id, got %#v", manifest.Entries)
+	}
+}
+
 func TestBeadsWriteSyncManifest(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+	runBrCommand = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		if args[0] == "list" {
+			return []byte(`[]`), nil
+		}
+		if args[0] != "create" {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		if slices.Contains(args, "Manifest A") {
+			return []byte(`{"id":"bead-401","title":"Manifest A"}`), nil
+		}
+		if slices.Contains(args, "Manifest B") {
+			return []byte(`{"id":"bead-402","title":"Manifest B"}`), nil
+		}
+		t.Fatalf("unexpected br create args: %#v", args)
+		return nil, nil
+	}
+
 	adapter := NewBeadsAdapter()
 	ctx := context.Background()
 	firstTask := TaskProjection{

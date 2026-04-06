@@ -20,11 +20,18 @@ type captureBeadsAdapter struct {
 	pushed       []tracker.TaskProjection
 	manifestPath string
 	profile      tracker.RenderProfile
+	reconcileFn  func(manifest tracker.SyncManifest) tracker.SyncManifest
 }
 
 func (a *captureBeadsAdapter) SeedFromSyncManifest(_ tracker.SyncManifest)    {}
 func (a *captureBeadsAdapter) SetRenderProfile(profile tracker.RenderProfile) { a.profile = profile }
 func (a *captureBeadsAdapter) ValidateTask(_ tracker.TaskProjection) error    { return nil }
+func (a *captureBeadsAdapter) ReconcileSyncManifest(_ context.Context, manifest tracker.SyncManifest) (tracker.SyncManifest, error) {
+	if a.reconcileFn != nil {
+		return a.reconcileFn(manifest), nil
+	}
+	return manifest, nil
+}
 func (a *captureBeadsAdapter) Capabilities() tracker.TrackerCapabilities {
 	return tracker.NewBeadsAdapter().Capabilities()
 }
@@ -751,6 +758,80 @@ func TestSyncBeadsPreservesNoopEntriesAcrossRuns(t *testing.T) {
 	}
 	if len(manifest.Entries) != 1 || manifest.Entries[0].ID != "fixture.task.sync.stable" {
 		t.Fatalf("expected manifest to preserve existing noop entry, got %s", string(raw))
+	}
+}
+
+func TestSyncBeadsReconcilesStaleManifestEntriesBeforePlanning(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"- [ ] Task sync recreate",
+		"  @id fixture.task.sync.recreate",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("mkdir manifest dir: %v", err)
+	}
+	manifest := tracker.SyncManifest{
+		SchemaVersion: tracker.SyncManifestSchemaVersionV01,
+		Entries: []tracker.SyncManifestEntry{
+			{
+				ID:             "fixture.task.sync.recreate",
+				RemoteID:       "beads:fixture.task.sync.recreate",
+				ProjectionHash: "same-hash-would-have-caused-noop",
+			},
+		},
+	}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	raw = append(raw, '\n')
+	if err := os.WriteFile(manifestPath, raw, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	restore := newBeadsSyncAdapter
+	adapter := &captureBeadsAdapter{
+		reconcileFn: func(manifest tracker.SyncManifest) tracker.SyncManifest {
+			return tracker.SyncManifest{SchemaVersion: manifest.SchemaVersion}
+		},
+	}
+	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
+	defer func() { newBeadsSyncAdapter = restore }()
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if len(adapter.pushed) != 1 {
+		t.Fatalf("expected stale manifest reconciliation to force one push, got %#v", adapter.pushed)
+	}
+
+	var payload struct {
+		Data struct {
+			CreateCount  int `json:"create_count"`
+			UpdateCount  int `json:"update_count"`
+			NoopCount    int `json:"noop_count"`
+			TasksMutated int `json:"tasks_mutated"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json output: %v output=%q", err, out.String())
+	}
+	if payload.Data.CreateCount != 1 || payload.Data.TasksMutated != 1 {
+		t.Fatalf("expected recreated task to count as a create mutation, got %s", out.String())
+	}
+	if payload.Data.UpdateCount != 0 || payload.Data.NoopCount != 0 {
+		t.Fatalf("expected no stale no-op/update accounting, got %s", out.String())
 	}
 }
 

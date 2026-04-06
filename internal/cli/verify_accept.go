@@ -51,7 +51,7 @@ func runVerifyAccept(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("verify-accept", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	acceptIndex := fs.Int("accept-index", 0, "index of @accept command to execute")
 	timeoutMS := fs.Int("timeout-ms", 60000, "command timeout in milliseconds")
 	format := fs.String("format", "json", "output format: json|text")

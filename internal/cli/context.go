@@ -44,7 +44,7 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	fs := flag.NewFlagSet("context", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to PLAN markdown file")
+	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	level := fs.String("level", "L0", "context level: L0|L1|L2")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(filteredArgs); err != nil {
