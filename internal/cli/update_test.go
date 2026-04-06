@@ -71,9 +71,10 @@ func TestUpdateCheckJSONIncludesLatestRelease(t *testing.T) {
 }
 
 func TestUpdateUsesInstallerForLatestStableRelease(t *testing.T) {
+	newerTag := fmt.Sprintf("v%s-next", CLIVersion)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"tag_name":"v0.1.6","html_url":"https://example.test/releases/v0.1.6"}`))
+		_, _ = w.Write([]byte(`{"tag_name":"` + newerTag + `","html_url":"https://example.test/releases/` + newerTag + `"}`))
 	}))
 	defer server.Close()
 
@@ -98,8 +99,8 @@ func TestUpdateUsesInstallerForLatestStableRelease(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
 	}
-	if captured.TargetRef != "v0.1.6" {
-		t.Fatalf("expected installer target v0.1.6, got %+v", captured)
+	if captured.TargetRef != newerTag {
+		t.Fatalf("expected installer target %s, got %+v", newerTag, captured)
 	}
 	if captured.InstallDir != filepath.Dir(fakeExe) {
 		t.Fatalf("expected installer dir %s, got %+v", filepath.Dir(fakeExe), captured)
