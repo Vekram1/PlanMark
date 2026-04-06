@@ -46,6 +46,13 @@ export PATH="$HOME/.local/bin:$PATH"
 
 The installer places `planmark` on your path and also installs `plan` as a compatibility alias by default.
 
+Check for newer releases or update in place on macOS/Linux:
+
+```bash
+planmark update --check
+planmark update
+```
+
 Install on Windows with PowerShell:
 
 ```powershell
@@ -54,6 +61,7 @@ planmark version --format json
 ```
 
 Windows release assets are published as `.zip` archives. The PowerShell installer installs `planmark.exe` and `plan.exe` under `%LOCALAPPDATA%\Programs\PlanMark\bin` by default.
+To update on Windows, rerun the PowerShell installer.
 
 ## First 10 Minutes
 

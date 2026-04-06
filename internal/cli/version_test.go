@@ -114,6 +114,9 @@ func TestRootHelpReturnsZeroAndShowsCommandGroups(t *testing.T) {
 	if !strings.Contains(rendered, "plan <command> [flags]") {
 		t.Fatalf("expected root help to mention legacy plan usage, got %q", rendered)
 	}
+	if !strings.Contains(rendered, "update          Check for and install the latest released PlanMark build") {
+		t.Fatalf("expected root help to mention update command, got %q", rendered)
+	}
 }
 
 func TestHelpCommandDelegatesToSubcommandHelp(t *testing.T) {
@@ -126,5 +129,18 @@ func TestHelpCommandDelegatesToSubcommandHelp(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "output format: text|json") {
 		t.Fatalf("expected delegated version help output, got %q", out.String())
+	}
+}
+
+func TestHelpCommandDelegatesToUpdateHelp(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	exit := Run([]string{"help", "update"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0 for help update, got %d stderr=%q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "check for a newer release without installing it") {
+		t.Fatalf("expected delegated update help output, got %q", out.String())
 	}
 }

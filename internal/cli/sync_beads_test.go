@@ -17,13 +17,42 @@ import (
 )
 
 type captureBeadsAdapter struct {
-	pushed       []tracker.TaskProjection
-	manifestPath string
-	profile      tracker.RenderProfile
-	reconcileFn  func(manifest tracker.SyncManifest) tracker.SyncManifest
+	pushed           []tracker.TaskProjection
+	manifestPath     string
+	profile          tracker.RenderProfile
+	reconcileFn      func(manifest tracker.SyncManifest) tracker.SyncManifest
+	projectionByID   map[string]string
+	provenanceByID   map[string]tracker.TaskProvenance
+	sourceHashByID   map[string]string
+	pushFailuresByID map[string][]error
 }
 
-func (a *captureBeadsAdapter) SeedFromSyncManifest(_ tracker.SyncManifest)    {}
+func (a *captureBeadsAdapter) SeedFromSyncManifest(manifest tracker.SyncManifest) {
+	if a.projectionByID == nil {
+		a.projectionByID = map[string]string{}
+	}
+	if a.sourceHashByID == nil {
+		a.sourceHashByID = map[string]string{}
+	}
+	if a.provenanceByID == nil {
+		a.provenanceByID = map[string]tracker.TaskProvenance{}
+	}
+	for _, entry := range manifest.Entries {
+		if strings.TrimSpace(entry.ID) == "" {
+			continue
+		}
+		a.projectionByID[entry.ID] = strings.TrimSpace(entry.ProjectionHash)
+		a.sourceHashByID[entry.ID] = strings.TrimSpace(entry.SourceHash)
+		a.provenanceByID[entry.ID] = tracker.TaskProvenance{
+			NodeRef:    strings.TrimSpace(entry.NodeRef),
+			Path:       strings.TrimSpace(entry.SourcePath),
+			StartLine:  entry.SourceStartLine,
+			EndLine:    entry.SourceEndLine,
+			SourceHash: strings.TrimSpace(entry.SourceHash),
+			CompileID:  strings.TrimSpace(entry.CompileID),
+		}
+	}
+}
 func (a *captureBeadsAdapter) SetRenderProfile(profile tracker.RenderProfile) { a.profile = profile }
 func (a *captureBeadsAdapter) ValidateTask(_ tracker.TaskProjection) error    { return nil }
 func (a *captureBeadsAdapter) ReconcileSyncManifest(_ context.Context, manifest tracker.SyncManifest) (tracker.SyncManifest, error) {
@@ -37,10 +66,48 @@ func (a *captureBeadsAdapter) Capabilities() tracker.TrackerCapabilities {
 }
 
 func (a *captureBeadsAdapter) PushTask(_ context.Context, task tracker.TaskProjection) (tracker.PushResult, error) {
+	if queued := a.pushFailuresByID[task.ID]; len(queued) > 0 {
+		err := queued[0]
+		if len(queued) == 1 {
+			delete(a.pushFailuresByID, task.ID)
+		} else {
+			a.pushFailuresByID[task.ID] = queued[1:]
+		}
+		return tracker.PushResult{}, err
+	}
+	if a.projectionByID == nil {
+		a.projectionByID = map[string]string{}
+	}
+	if a.sourceHashByID == nil {
+		a.sourceHashByID = map[string]string{}
+	}
+	if a.provenanceByID == nil {
+		a.provenanceByID = map[string]tracker.TaskProvenance{}
+	}
+	hash, err := tracker.TaskProjectionHash(task)
+	if err != nil {
+		return tracker.PushResult{}, err
+	}
 	a.pushed = append(a.pushed, task)
+	if prior, ok := a.projectionByID[task.ID]; ok && prior == hash {
+		return tracker.PushResult{
+			RemoteID:   "bead:" + task.ID,
+			Noop:       true,
+			Mutated:    false,
+			Diagnostic: "projection unchanged",
+		}, nil
+	}
+	diagnostic := "projection updated"
+	if priorSource, ok := a.sourceHashByID[task.ID]; ok && priorSource != strings.TrimSpace(task.Provenance.SourceHash) {
+		diagnostic = "projection drift detected: source hash changed"
+	}
+	a.projectionByID[task.ID] = hash
+	a.sourceHashByID[task.ID] = strings.TrimSpace(task.Provenance.SourceHash)
+	a.provenanceByID[task.ID] = task.Provenance
 	return tracker.PushResult{
-		RemoteID: "beads:" + task.ID,
-		Mutated:  true,
+		RemoteID:   "bead:" + task.ID,
+		Mutated:    true,
+		Diagnostic: diagnostic,
 	}, nil
 }
 
@@ -48,7 +115,66 @@ func (a *captureBeadsAdapter) WriteSyncManifest(stateDir string) (string, error)
 	if a.manifestPath == "" {
 		a.manifestPath = filepath.Join(stateDir, "sync", "beads-manifest.json")
 	}
+	if err := os.MkdirAll(filepath.Dir(a.manifestPath), 0o755); err != nil {
+		return "", err
+	}
+	entries := make([]tracker.SyncManifestEntry, 0, len(a.projectionByID))
+	for id, projectionHash := range a.projectionByID {
+		provenance := a.provenanceByID[id]
+		entries = append(entries, tracker.SyncManifestEntry{
+			ID:              id,
+			RemoteID:        "bead:" + id,
+			ProjectionHash:  projectionHash,
+			NodeRef:         provenance.NodeRef,
+			SourcePath:      provenance.Path,
+			SourceStartLine: provenance.StartLine,
+			SourceEndLine:   provenance.EndLine,
+			SourceHash:      a.sourceHashByID[id],
+			CompileID:       provenance.CompileID,
+		})
+	}
+	manifest := tracker.SyncManifest{
+		SchemaVersion: tracker.SyncManifestSchemaVersionV01,
+		Entries:       entries,
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(a.manifestPath, data, 0o644); err != nil {
+		return "", err
+	}
 	return a.manifestPath, nil
+}
+
+func installCaptureBeadsAdapter(t *testing.T) *captureBeadsAdapter {
+	t.Helper()
+	restore := newBeadsSyncAdapter
+	adapter := &captureBeadsAdapter{
+		projectionByID:   map[string]string{},
+		provenanceByID:   map[string]tracker.TaskProvenance{},
+		sourceHashByID:   map[string]string{},
+		pushFailuresByID: map[string][]error{},
+	}
+	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
+	t.Cleanup(func() {
+		newBeadsSyncAdapter = restore
+	})
+	return adapter
+}
+
+func (a *captureBeadsAdapter) SetPushFailures(id string, failures []error) {
+	if a.pushFailuresByID == nil {
+		a.pushFailuresByID = map[string][]error{}
+	}
+	if len(failures) == 0 {
+		delete(a.pushFailuresByID, id)
+		return
+	}
+	copied := make([]error, len(failures))
+	copy(copied, failures)
+	a.pushFailuresByID[id] = copied
 }
 
 func TestSyncBeadsUsageRequiresTarget(t *testing.T) {
@@ -64,6 +190,7 @@ func TestSyncBeadsUsageRequiresTarget(t *testing.T) {
 }
 
 func TestSyncBeadsDefaultsToBeadsAdapter(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -88,6 +215,7 @@ func TestSyncBeadsDefaultsToBeadsAdapter(t *testing.T) {
 }
 
 func TestSyncBeadsWritesManifest(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -443,6 +571,7 @@ func TestSyncBeadsDryRunTextIncludesPlannedOps(t *testing.T) {
 }
 
 func TestSyncBeadsJSONOmitsPlannedOpsWithoutDryRun(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -512,6 +641,7 @@ func TestSyncBeadsCLIJSONOutputStable(t *testing.T) {
 }
 
 func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -581,6 +711,7 @@ func TestBeadProvenanceMismatchMarkedStale(t *testing.T) {
 }
 
 func TestSyncBeadsAcceptsTargetBeforeFlags(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -607,6 +738,7 @@ func TestSyncBeadsAcceptsTargetBeforeFlags(t *testing.T) {
 }
 
 func TestSyncBeadsDefaultDeletionPolicyMarkStale(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	planBody := strings.Join([]string{
@@ -664,6 +796,7 @@ func TestSyncBeadsRejectsInvalidDeletionPolicy(t *testing.T) {
 }
 
 func TestSyncBeadsDeletionPolicyFlagParsing(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	planBody := strings.Join([]string{
@@ -700,6 +833,7 @@ func TestSyncBeadsDeletionPolicyFlagParsing(t *testing.T) {
 }
 
 func TestSyncBeadsPreservesNoopEntriesAcrossRuns(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -850,11 +984,10 @@ func TestBeadsSyncRetryTransientFailure(t *testing.T) {
 	}
 
 	restore := newBeadsSyncAdapter
-	adapter := tracker.NewBeadsAdapter()
+	adapter := installCaptureBeadsAdapter(t)
 	adapter.SetPushFailures("fixture.task.sync.retry.transient", []error{
 		fmt.Errorf("%w: temporary gateway timeout", tracker.ErrTransientSync),
 	})
-	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
 	defer func() { newBeadsSyncAdapter = restore }()
 
 	var out bytes.Buffer
@@ -901,12 +1034,11 @@ func TestBeadsSyncRateLimitBackoffBehavior(t *testing.T) {
 	}
 
 	restore := newBeadsSyncAdapter
-	adapter := tracker.NewBeadsAdapter()
+	adapter := installCaptureBeadsAdapter(t)
 	adapter.SetPushFailures("fixture.task.sync.retry.ratelimit", []error{
 		fmt.Errorf("%w: 429", tracker.ErrRateLimitedSync),
 		fmt.Errorf("%w: 429", tracker.ErrRateLimitedSync),
 	})
-	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
 	defer func() { newBeadsSyncAdapter = restore }()
 
 	var out bytes.Buffer
