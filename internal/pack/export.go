@@ -530,7 +530,7 @@ func sha256Hex(data []byte) string {
 
 func safeTaskPathSegment(taskID string) string {
 	escaped := url.PathEscape(strings.TrimSpace(taskID))
-	if escaped == "" {
+	if escaped == "" || escaped == "." || escaped == ".." {
 		return "task"
 	}
 	return escaped

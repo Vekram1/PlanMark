@@ -156,6 +156,13 @@ Recommended escalation path for agents:
 
 That keeps context small while preserving deterministic traceability back to the plan source.
 
+How to choose the level in practice:
+
+- Start with `L0` by default. `L0` already includes the task's identity, dependencies, acceptance targets, steps, evidence references, and the exact source slice from `PLAN.md` via `source_path`, `start_line`, `end_line`, `slice_hash`, and `slice_text`.
+- Escalate to `L1` only when the task includes pin-backed references and you need the referenced file or range extracts in addition to the task's own plan slice.
+- Escalate to `L2` only when you need dependency-closure reasoning, such as understanding upstream tasks that must be completed or inspected first.
+- Treat context as a progressive budget. Do not default to `L2` for routine execution work, because it pulls in adjacent task context that is often unnecessary.
+
 ## Tracker Sync
 
 Trackers are projection layers. `PLAN.md` remains canonical.
