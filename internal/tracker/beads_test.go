@@ -813,6 +813,38 @@ func TestBeadsAdapterUsesExplicitDBPath(t *testing.T) {
 	}
 }
 
+func TestRunBrCommandIgnoresStderrLogsOnSuccess(t *testing.T) {
+	tempDir := t.TempDir()
+	scriptPath := filepath.Join(tempDir, "br")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"echo '{\"id\":\"bd-999\",\"title\":\"stderr noise test\"}'",
+		"echo '2026-04-06T21:55:15Z INFO beads_rust::sync: Auto-flush complete' >&2",
+	}, "\n")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake br: %v", err)
+	}
+
+	originalPath := os.Getenv("PATH")
+	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+originalPath)
+
+	output, err := runBrCommand("create", "--json")
+	if err != nil {
+		t.Fatalf("runBrCommand: %v", err)
+	}
+	if strings.Contains(string(output), "Auto-flush complete") {
+		t.Fatalf("expected stdout json only, got %q", string(output))
+	}
+
+	var issue beadsIssue
+	if err := json.Unmarshal(output, &issue); err != nil {
+		t.Fatalf("decode fake br json: %v output=%q", err, string(output))
+	}
+	if issue.ID != "bd-999" {
+		t.Fatalf("expected fake issue id bd-999, got %#v", issue)
+	}
+}
+
 func TestBeadsWriteSyncManifestRespectsLock(t *testing.T) {
 	adapter := NewBeadsAdapter()
 	stateDir := filepath.Join(t.TempDir(), ".planmark")

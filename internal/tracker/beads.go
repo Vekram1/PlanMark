@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -64,12 +65,21 @@ type BeadsAdapter struct {
 
 var runBrCommand = func(args ...string) ([]byte, error) {
 	cmd := exec.Command("br", args...)
-	output, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err != nil {
-		if len(output) == 0 {
+		stderrText := strings.TrimSpace(stderr.String())
+		if len(output) == 0 && stderrText == "" {
 			return nil, err
 		}
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		if stderrText == "" {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+		if len(output) == 0 {
+			return nil, fmt.Errorf("%w: %s", err, stderrText)
+		}
+		return nil, fmt.Errorf("%w: %s\n%s", err, strings.TrimSpace(string(output)), stderrText)
 	}
 	return output, nil
 }
