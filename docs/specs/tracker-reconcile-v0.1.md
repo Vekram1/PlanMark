@@ -61,6 +61,7 @@ These classes are machine-facing contract surfaces for dry-run/apply behavior.
 - Default deletion policy is `mark-stale`.
 - Destructive options (`close`, `detach`, `delete`) require explicit opt-in command/policy flags.
 - PLAN removals must never imply hard delete by default.
+- The Beads adapter materializes `mark-stale` non-destructively by closing the tracker issue and dropping the live sync mapping from the next manifest; issue history remains in the tracker.
 
 1. Conflict handling
 - Conflicts are explicit when runtime overlay and canonical projection updates cannot be merged under safe-field rules.

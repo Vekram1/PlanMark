@@ -18,6 +18,8 @@ import (
 
 type captureBeadsAdapter struct {
 	pushed           []tracker.TaskProjection
+	staled           []string
+	staleReasons     map[string]string
 	manifestPath     string
 	profile          tracker.RenderProfile
 	reconcileFn      func(manifest tracker.SyncManifest) tracker.SyncManifest
@@ -111,6 +113,22 @@ func (a *captureBeadsAdapter) PushTask(_ context.Context, task tracker.TaskProje
 	}, nil
 }
 
+func (a *captureBeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string) (tracker.PushResult, error) {
+	a.staled = append(a.staled, id)
+	if a.staleReasons == nil {
+		a.staleReasons = map[string]string{}
+	}
+	a.staleReasons[id] = reason
+	delete(a.projectionByID, id)
+	delete(a.sourceHashByID, id)
+	delete(a.provenanceByID, id)
+	return tracker.PushResult{
+		RemoteID:   "bead:" + id,
+		Mutated:    true,
+		Diagnostic: "tracker issue closed for stale task",
+	}, nil
+}
+
 func (a *captureBeadsAdapter) WriteSyncManifest(stateDir string) (string, error) {
 	if a.manifestPath == "" {
 		a.manifestPath = filepath.Join(stateDir, "sync", "beads-manifest.json")
@@ -156,6 +174,7 @@ func installCaptureBeadsAdapter(t *testing.T) *captureBeadsAdapter {
 		provenanceByID:   map[string]tracker.TaskProvenance{},
 		sourceHashByID:   map[string]string{},
 		pushFailuresByID: map[string][]error{},
+		staleReasons:     map[string]string{},
 	}
 	newBeadsSyncAdapter = func() beadsSyncAdapter { return adapter }
 	t.Cleanup(func() {
@@ -892,6 +911,87 @@ func TestSyncBeadsPreservesNoopEntriesAcrossRuns(t *testing.T) {
 	}
 	if len(manifest.Entries) != 1 || manifest.Entries[0].ID != "fixture.task.sync.stable" {
 		t.Fatalf("expected manifest to preserve existing noop entry, got %s", string(raw))
+	}
+}
+
+func TestSyncBeadsMarkStaleClosesTrackerIssueAndDropsManifestEntry(t *testing.T) {
+	adapter := installCaptureBeadsAdapter(t)
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	if err := os.WriteFile(planPath, []byte("# Empty\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("mkdir manifest dir: %v", err)
+	}
+	manifest := tracker.SyncManifest{
+		SchemaVersion: tracker.SyncManifestSchemaVersionV01,
+		Entries: []tracker.SyncManifestEntry{
+			{
+				ID:              "fixture.task.sync.stale",
+				RemoteID:        "bd-123",
+				ProjectionHash:  "old-hash",
+				NodeRef:         "./PLAN.md|heading|old#1",
+				SourcePath:      "./PLAN.md",
+				SourceStartLine: 3,
+				SourceEndLine:   9,
+				SourceHash:      strings.Repeat("a", 64),
+				CompileID:       strings.Repeat("b", 64),
+			},
+		},
+	}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	raw = append(raw, '\n')
+	if err := os.WriteFile(manifestPath, raw, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	if !reflect.DeepEqual(adapter.staled, []string{"fixture.task.sync.stale"}) {
+		t.Fatalf("expected stale handler to close tracked issue, got %#v", adapter.staled)
+	}
+	if got := adapter.staleReasons["fixture.task.sync.stale"]; !strings.Contains(got, "missing in desired") {
+		t.Fatalf("expected stale reason to mention missing desired state, got %q", got)
+	}
+
+	var payload struct {
+		Data struct {
+			TasksMutated   int `json:"tasks_mutated"`
+			MarkStaleCount int `json:"mark_stale_count"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json output: %v output=%q", err, out.String())
+	}
+	if payload.Data.MarkStaleCount != 1 {
+		t.Fatalf("expected one mark-stale op, got %#v", payload.Data)
+	}
+	if payload.Data.TasksMutated != 1 {
+		t.Fatalf("expected stale close to count as mutation, got %#v", payload.Data)
+	}
+
+	manifestRaw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var rewritten tracker.SyncManifest
+	if err := json.Unmarshal(manifestRaw, &rewritten); err != nil {
+		t.Fatalf("decode rewritten manifest: %v", err)
+	}
+	if len(rewritten.Entries) != 0 {
+		t.Fatalf("expected stale entry to be removed from manifest, got %s", string(manifestRaw))
 	}
 }
 

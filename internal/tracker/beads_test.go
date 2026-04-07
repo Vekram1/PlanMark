@@ -769,6 +769,58 @@ func TestBeadsPushTitleChangeUpdatesExistingIssue(t *testing.T) {
 	}
 }
 
+func TestBeadsMarkTaskStaleClosesIssueAndDropsState(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	var seen [][]string
+	runBrCommand = func(args ...string) ([]byte, error) {
+		seen = append(seen, append([]string(nil), args...))
+		switch args[0] {
+		case "close":
+			return []byte(`[{"id":"bd-2qn","status":"closed"}]`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
+	adapter := NewBeadsAdapter()
+	adapter.SeedFromSyncManifest(SyncManifest{
+		SchemaVersion: SyncManifestSchemaVersionV01,
+		Entries: []SyncManifestEntry{
+			{
+				ID:              "fv.reconcile.actions",
+				RemoteID:        "bd-2qn",
+				ProjectionHash:  "hash-1",
+				NodeRef:         "./PLAN.md|heading|actions#1",
+				SourcePath:      "./PLAN.md",
+				SourceStartLine: 102,
+				SourceEndLine:   137,
+				SourceHash:      strings.Repeat("a", 64),
+				CompileID:       strings.Repeat("c", 64),
+			},
+		},
+	})
+
+	result, err := adapter.MarkTaskStale(context.Background(), "fv.reconcile.actions", "present in prior projection set but missing in desired")
+	if err != nil {
+		t.Fatalf("mark task stale: %v", err)
+	}
+	if !result.Mutated || result.RemoteID != "bd-2qn" {
+		t.Fatalf("expected stale close mutation, got %#v", result)
+	}
+	if len(seen) != 1 || seen[0][0] != "close" || seen[0][1] != "bd-2qn" {
+		t.Fatalf("expected close call for bd-2qn, got %#v", seen)
+	}
+	if !slices.Contains(seen[0], "--reason") {
+		t.Fatalf("expected close reason in command args, got %#v", seen[0])
+	}
+	if len(adapter.BuildSyncManifest().Entries) != 0 {
+		t.Fatalf("expected closed stale task to be removed from manifest state, got %#v", adapter.BuildSyncManifest().Entries)
+	}
+}
+
 func TestBeadsAdapterUsesExplicitDBPath(t *testing.T) {
 	restore := runBrCommand
 	defer func() { runBrCommand = restore }()

@@ -285,6 +285,45 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 	}, nil
 }
 
+func (a *BeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string) (PushResult, error) {
+	remoteID := strings.TrimSpace(a.remoteIDByID[id])
+	if !isLikelyBeadsIssueID(remoteID) {
+		existing, err := a.lookupIssueByExternalRef(id)
+		if err != nil {
+			return PushResult{}, err
+		}
+		if isLikelyBeadsIssueID(existing.ID) {
+			remoteID = existing.ID
+		}
+	}
+	if !isLikelyBeadsIssueID(remoteID) {
+		a.deleteTaskState(id)
+		return PushResult{
+			Noop:       true,
+			Mutated:    false,
+			Diagnostic: "tracker issue already absent for stale task",
+		}, nil
+	}
+	if err := a.closeIssue(remoteID, staleCloseReason(reason)); err != nil {
+		if isBeadsIssueNotFound(err) {
+			a.deleteTaskState(id)
+			return PushResult{
+				RemoteID:   remoteID,
+				Noop:       true,
+				Mutated:    false,
+				Diagnostic: "tracker issue already absent for stale task",
+			}, nil
+		}
+		return PushResult{}, err
+	}
+	a.deleteTaskState(id)
+	return PushResult{
+		RemoteID:   remoteID,
+		Mutated:    true,
+		Diagnostic: "tracker issue closed for stale task",
+	}, nil
+}
+
 func (a *BeadsAdapter) createIssue(title string, description string, acceptance string) (beadsIssue, error) {
 	return a.createIssueWithExternalRef("", title, description, acceptance)
 }
@@ -378,6 +417,14 @@ func (a *BeadsAdapter) lookupIssueByExternalRef(externalRef string) (beadsIssue,
 	return beadsIssue{}, nil
 }
 
+func (a *BeadsAdapter) closeIssue(id string, reason string) error {
+	args := []string{"close", id, "--reason", reason, "--json"}
+	if _, err := a.runBr(args...); err != nil {
+		return fmt.Errorf("br close %s: %w", id, err)
+	}
+	return nil
+}
+
 func (a *BeadsAdapter) runBr(args ...string) ([]byte, error) {
 	if strings.TrimSpace(a.dbPath) == "" {
 		return runBrCommand(args...)
@@ -389,6 +436,16 @@ func (a *BeadsAdapter) runBr(args ...string) ([]byte, error) {
 	withDB = append(withDB, args[0], "--db", a.dbPath)
 	withDB = append(withDB, args[1:]...)
 	return runBrCommand(withDB...)
+}
+
+func (a *BeadsAdapter) deleteTaskState(id string) {
+	delete(a.projectionHashByID, id)
+	delete(a.sourceHashByID, id)
+	delete(a.provenanceByID, id)
+	delete(a.remoteIDByID, id)
+	delete(a.runtimeByID, id)
+	delete(a.lastSeenRuntime, id)
+	delete(a.pushFailuresByID, id)
 }
 
 func isLikelyBeadsIssueID(id string) bool {
@@ -410,6 +467,14 @@ func isBeadsIssueNotFound(err error) bool {
 	}
 	lower := strings.ToLower(err.Error())
 	return strings.Contains(lower, "issue_not_found") || strings.Contains(lower, "issue not found")
+}
+
+func staleCloseReason(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		return "PlanMark sync marked this task stale"
+	}
+	return "PlanMark sync marked this task stale: " + trimmed
 }
 
 func buildProjectionPayloadFromRendered(task TaskProjection, rendered RenderedTask) (BeadsProjectionPayload, error) {
