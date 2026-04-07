@@ -62,6 +62,10 @@ type syncManifestReconciler interface {
 	ReconcileSyncManifest(ctx context.Context, manifest tracker.SyncManifest) (tracker.SyncManifest, error)
 }
 
+type staleTaskAdapter interface {
+	MarkTaskStale(ctx context.Context, id string, reason string) (tracker.PushResult, error)
+}
+
 var newBeadsSyncAdapter = func() beadsSyncAdapter {
 	return tracker.NewBeadsAdapter()
 }
@@ -359,6 +363,69 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			}); err != nil {
 				fmt.Fprintf(stderr, "append sync journal dry-run skip: %v\n", err)
 				return protocol.ExitInternalError
+			}
+			continue
+		}
+		if op.Kind == syncplanner.OperationMarkStale {
+			handler, ok := adapter.(staleTaskAdapter)
+			if !ok {
+				if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+					OperationID: opID,
+					Kind:        string(op.Kind),
+					ID:          op.ID,
+					Attempt:     1,
+					Outcome:     journal.OutcomeSkipped,
+				}); err != nil {
+					fmt.Fprintf(stderr, "append sync journal non-mutating skip: %v\n", err)
+					return protocol.ExitInternalError
+				}
+				continue
+			}
+			var staleResult tracker.PushResult
+			var staleErr error
+			for attempt := 1; ; attempt++ {
+				staleResult, staleErr = handler.MarkTaskStale(ctx, op.ID, op.Reason)
+				if staleErr == nil {
+					if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+						OperationID: opID,
+						Kind:        string(op.Kind),
+						ID:          op.ID,
+						Attempt:     attempt,
+						Outcome:     journal.OutcomeSuccess,
+					}); err != nil {
+						fmt.Fprintf(stderr, "append sync journal success record: %v\n", err)
+						return protocol.ExitInternalError
+					}
+					break
+				}
+
+				retryable := tracker.IsRetryableSyncError(staleErr)
+				maxAttempts := retryMaxAttempts(staleErr)
+				errDetail := staleErr.Error()
+				if retryable && attempt < maxAttempts {
+					errDetail = fmt.Sprintf("%s (retry scheduled: backoff_ms=%d)", errDetail, retryBackoffMillis(staleErr, attempt))
+				}
+				if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
+					OperationID: opID,
+					Kind:        string(op.Kind),
+					ID:          op.ID,
+					Attempt:     attempt,
+					Outcome:     journal.OutcomeFailed,
+					Error:       errDetail,
+				}); err != nil {
+					fmt.Fprintf(stderr, "append sync journal failure record: %v\n", err)
+					return protocol.ExitInternalError
+				}
+				if !retryable || attempt >= maxAttempts {
+					fmt.Fprintf(stderr, "mark stale task projection: %v\n", staleErr)
+					return protocol.ExitInternalError
+				}
+			}
+			if staleResult.Mutated {
+				result.TasksMutated++
+			}
+			if strings.Contains(staleResult.Diagnostic, "drift detected") {
+				result.DriftCount++
 			}
 			continue
 		}
