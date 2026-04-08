@@ -94,6 +94,62 @@ func TestInitDoesNotOverwriteExistingPlanOrConfig(t *testing.T) {
 	}
 }
 
+func TestInitReportsExistingPlanInsteadOfRecreatingIt(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planContent := strings.Join([]string{
+		"# Existing plan",
+		"",
+		"## Keep this heading",
+		"",
+		"@id existing.task",
+		"",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"init", "--dir", tmp, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+
+	gotPlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read plan fixture: %v", err)
+	}
+	if string(gotPlan) != planContent {
+		t.Fatalf("plan was overwritten: got %q", string(gotPlan))
+	}
+
+	var payload struct {
+		Data struct {
+			Created  []string `json:"created"`
+			Existing []string `json:"existing"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode init output: %v output=%q", err, out.String())
+	}
+	for _, created := range payload.Data.Created {
+		if created == "PLAN.md" {
+			t.Fatalf("expected PLAN.md not to be recreated, got payload=%+v", payload.Data)
+		}
+	}
+	foundExisting := false
+	for _, existing := range payload.Data.Existing {
+		if existing == "PLAN.md" {
+			foundExisting = true
+			break
+		}
+	}
+	if !foundExisting {
+		t.Fatalf("expected PLAN.md to be reported as existing, got payload=%+v", payload.Data)
+	}
+}
+
 func TestInitNoConfigNoPlanTemplate(t *testing.T) {
 	tmp := t.TempDir()
 	var out bytes.Buffer

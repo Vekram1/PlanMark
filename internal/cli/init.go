@@ -164,7 +164,7 @@ func runInit(args []string, stdout io.Writer, stderr io.Writer) int {
 	stateVersionPath := filepath.Join(stateDir, "state_version.json")
 	if _, err := os.Stat(stateVersionPath); errors.Is(err, os.ErrNotExist) {
 		payload := []byte("{\n  \"state_version\": \"" + stateVersionV01 + "\"\n}\n")
-		if err := fsio.WriteFileAtomic(stateVersionPath, payload, 0o644); err != nil {
+		if err := writeFileIfMissing(stateVersionPath, payload, 0o644); err != nil {
 			fmt.Fprintf(stderr, "write state version: %v\n", err)
 			return protocol.ExitInternalError
 		}
@@ -178,7 +178,7 @@ func runInit(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	if _, err := os.Stat(planPath); errors.Is(err, os.ErrNotExist) {
 		if !*noPlanTemplate {
-			if err := fsio.WriteFileAtomic(planPath, []byte(defaultPlanBody), 0o644); err != nil {
+			if err := writeFileIfMissing(planPath, []byte(defaultPlanBody), 0o644); err != nil {
 				fmt.Fprintf(stderr, "write plan template: %v\n", err)
 				return protocol.ExitInternalError
 			}
@@ -193,7 +193,7 @@ func runInit(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	if !*noConfig {
 		if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
-			if err := fsio.WriteFileAtomic(configPath, []byte(defaultConfigBody), 0o644); err != nil {
+			if err := writeFileIfMissing(configPath, []byte(defaultConfigBody), 0o644); err != nil {
 				fmt.Fprintf(stderr, "write config: %v\n", err)
 				return protocol.ExitInternalError
 			}
@@ -290,6 +290,27 @@ func relToProject(root string, path string) string {
 		return rel
 	}
 	return filepath.Clean(rel)
+}
+
+func writeFileIfMissing(path string, payload []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	if _, err := file.Write(payload); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func ensureAgentsGuide(path string) (created bool, updated bool, err error) {
