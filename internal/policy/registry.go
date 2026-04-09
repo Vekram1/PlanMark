@@ -23,13 +23,13 @@ func NewRegistry() *Registry {
 	return &Registry{
 		supported: map[Kind][]string{
 			KindDeterminism:        {"v0.1"},
-			KindSemanticDerivation: {"v0.1"},
+			KindSemanticDerivation: {"v0.1", "v0.2", "v0.3", "v0.4"},
 			KindChangeDetection:    {"v0.1"},
 			KindTrackerReconcile:   {"v0.1"},
 		},
 		defaults: map[Kind]string{
 			KindDeterminism:        "v0.1",
-			KindSemanticDerivation: "v0.1",
+			KindSemanticDerivation: "v0.4",
 			KindChangeDetection:    "v0.1",
 			KindTrackerReconcile:   "v0.1",
 		},

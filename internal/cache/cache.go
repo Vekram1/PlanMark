@@ -35,6 +35,7 @@ type ContextKeyInput struct {
 	TaskSemanticFingerprint         string   `json:"task_semantic_fingerprint"`
 	NodeSliceHash                   string   `json:"node_slice_hash"`
 	PinTargetHashes                 []string `json:"pin_target_hashes,omitempty"`
+	DependencySliceHashes           []string `json:"dependency_slice_hashes,omitempty"`
 }
 
 type CompileReuseInput struct {
@@ -56,6 +57,8 @@ func ContextPacketKey(input ContextKeyInput) string {
 
 	pinHashes := append([]string(nil), input.PinTargetHashes...)
 	sort.Strings(pinHashes)
+	dependencyHashes := append([]string(nil), input.DependencySliceHashes...)
+	sort.Strings(dependencyHashes)
 
 	canonical := ContextKeyInput{
 		SchemaVersion:                   schemaVersion,
@@ -69,6 +72,7 @@ func ContextPacketKey(input ContextKeyInput) string {
 		TaskSemanticFingerprint:         strings.TrimSpace(input.TaskSemanticFingerprint),
 		NodeSliceHash:                   strings.TrimSpace(input.NodeSliceHash),
 		PinTargetHashes:                 pinHashes,
+		DependencySliceHashes:           dependencyHashes,
 	}
 
 	payload, _ := json.Marshal(canonical)

@@ -27,6 +27,7 @@ type L0Packet struct {
 	Horizon    string            `json:"horizon,omitempty"`
 	Deps       []string          `json:"deps,omitempty"`
 	Accept     []string          `json:"accept,omitempty"`
+	Sections   []TaskSectionData `json:"sections,omitempty"`
 	Steps      []TaskStepContext `json:"steps,omitempty"`
 	Evidence   []EvidenceSlice   `json:"evidence,omitempty"`
 	SourcePath string            `json:"source_path"`
@@ -41,6 +42,12 @@ type TaskStepContext struct {
 	Title     string `json:"title"`
 	Checked   bool   `json:"checked,omitempty"`
 	SliceHash string `json:"slice_hash,omitempty"`
+}
+
+type TaskSectionData struct {
+	Key   string   `json:"key,omitempty"`
+	Title string   `json:"title,omitempty"`
+	Body  []string `json:"body,omitempty"`
 }
 
 type EvidenceSlice struct {
@@ -197,6 +204,55 @@ func BuildL2(plan ir.PlanIR, taskID string) (L2Packet, error) {
 		L0Packet: base,
 		Closure:  closure,
 	}, nil
+}
+
+func BuildL2Cached(plan ir.PlanIR, taskID string, stateDir string) (L2Packet, bool, error) {
+	task, node, err := resolveTaskAndNode(plan, taskID)
+	if err != nil {
+		return L2Packet{}, false, err
+	}
+	packet, err := BuildL2(plan, taskID)
+	if err != nil {
+		return L2Packet{}, false, err
+	}
+
+	closureHashes := make([]string, 0, len(packet.Closure))
+	for _, dep := range packet.Closure {
+		closureHashes = append(closureHashes, strings.TrimSpace(dep.SliceHash))
+	}
+	key := cache.ContextPacketKey(cache.ContextKeyInput{
+		Level:                           "L2",
+		PlanPath:                        plan.PlanPath,
+		IRVersion:                       plan.IRVersion,
+		DeterminismPolicyVersion:        plan.DeterminismPolicyVersion,
+		SemanticDerivationPolicyVersion: plan.SemanticDerivationPolicyVersion,
+		TaskID:                          task.ID,
+		TaskNodeRef:                     task.NodeRef,
+		TaskSemanticFingerprint:         task.SemanticFingerprint,
+		NodeSliceHash:                   node.SliceHash,
+		DependencySliceHashes:           closureHashes,
+	})
+	if strings.TrimSpace(stateDir) != "" {
+		if payload, err := cache.ReadContextPacket(stateDir, key); err == nil {
+			var cached L2Packet
+			if err := json.Unmarshal(payload, &cached); err == nil {
+				return cached, true, nil
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return L2Packet{}, false, err
+		}
+	}
+
+	if strings.TrimSpace(stateDir) != "" {
+		payload, err := json.Marshal(packet)
+		if err != nil {
+			return L2Packet{}, false, fmt.Errorf("marshal L2 packet: %w", err)
+		}
+		if _, err := cache.WriteContextPacket(stateDir, key, payload); err != nil {
+			return L2Packet{}, false, err
+		}
+	}
+	return packet, false, nil
 }
 
 func BuildL0Cached(plan ir.PlanIR, taskID string, stateDir string) (L0Packet, bool, error) {
@@ -442,6 +498,15 @@ func buildL0Packet(plan ir.PlanIR, task ir.Task, node ir.SourceNode) L0Packet {
 		})
 	}
 
+	sections := make([]TaskSectionData, 0, len(task.Sections))
+	for _, section := range task.Sections {
+		sections = append(sections, TaskSectionData{
+			Key:   section.Key,
+			Title: section.Title,
+			Body:  append([]string(nil), section.Body...),
+		})
+	}
+
 	evidence := make([]EvidenceSlice, 0, len(task.EvidenceNodeRefs))
 	for _, nodeRef := range task.EvidenceNodeRefs {
 		evidenceNode, ok := nodeByRef[nodeRef]
@@ -468,6 +533,7 @@ func buildL0Packet(plan ir.PlanIR, task ir.Task, node ir.SourceNode) L0Packet {
 		Horizon:    task.Horizon,
 		Deps:       append([]string(nil), task.Deps...),
 		Accept:     append([]string(nil), task.Accept...),
+		Sections:   sections,
 		Steps:      steps,
 		Evidence:   evidence,
 		SourcePath: plan.PlanPath,

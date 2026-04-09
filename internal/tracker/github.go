@@ -62,7 +62,7 @@ func (a *GitHubAdapter) Capabilities() TrackerCapabilities {
 			Assignee: true,
 			Priority: false,
 		},
-		ProjectionSchema: ProjectionSchemaVersionV02,
+		ProjectionSchema: ProjectionSchemaVersionV03,
 	}
 }
 
@@ -115,7 +115,31 @@ func (a *GitHubAdapter) PushTask(_ context.Context, task TaskProjection) (PushRe
 	if err != nil {
 		return PushResult{}, fmt.Errorf("hash task projection: %w", err)
 	}
+	currentStatus := strings.TrimSpace(a.runtimeByID[id].Status)
+	shouldClose := taskShouldBeClosed(task)
 	if previousHash, ok := a.projectionHashByID[id]; ok && previousHash == currentHash {
+		if shouldClose && !strings.EqualFold(currentStatus, "closed") {
+			state := a.runtimeByID[id]
+			state.Status = "closed"
+			a.runtimeByID[id] = state
+			return PushResult{
+				RemoteID:   a.remoteIDByID[id],
+				Mutated:    true,
+				Noop:       false,
+				Diagnostic: "closed tracker issue for canonically completed task",
+			}, nil
+		}
+		if !shouldClose && strings.EqualFold(currentStatus, "closed") {
+			state := a.runtimeByID[id]
+			state.Status = "open"
+			a.runtimeByID[id] = state
+			return PushResult{
+				RemoteID:   a.remoteIDByID[id],
+				Mutated:    true,
+				Noop:       false,
+				Diagnostic: "reopened closed tracker issue with unchanged projection",
+			}, nil
+		}
 		return PushResult{
 			RemoteID:   a.remoteIDByID[id],
 			Mutated:    false,
@@ -131,6 +155,13 @@ func (a *GitHubAdapter) PushTask(_ context.Context, task TaskProjection) (PushRe
 	a.projectionHashByID[id] = currentHash
 	a.remoteIDByID[id] = remoteID
 	a.provenanceByID[id] = normalizedProvenance(task.Provenance)
+	state := a.runtimeByID[id]
+	if shouldClose {
+		state.Status = "closed"
+	} else {
+		state.Status = "open"
+	}
+	a.runtimeByID[id] = state
 
 	return PushResult{
 		RemoteID:   remoteID,

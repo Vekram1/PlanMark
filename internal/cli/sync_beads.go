@@ -66,6 +66,22 @@ type staleTaskAdapter interface {
 	MarkTaskStale(ctx context.Context, id string, reason string) (tracker.PushResult, error)
 }
 
+type dependencySyncAdapter interface {
+	SyncDependencies(ctx context.Context, tasks map[string]tracker.TaskProjection) error
+}
+
+type staleTrackerCandidateLister interface {
+	ListStaleCandidates(ctx context.Context, desiredIDs map[string]struct{}) ([]tracker.SyncManifestEntry, error)
+}
+
+type cleanupCandidateLister interface {
+	ListCleanupCandidates(ctx context.Context, planPath string, desiredIDs map[string]struct{}) ([]tracker.CleanupCandidate, error)
+}
+
+type cleanupCandidateCloser interface {
+	CleanupCandidate(ctx context.Context, candidate tracker.CleanupCandidate) error
+}
+
 var newBeadsSyncAdapter = func() beadsSyncAdapter {
 	return tracker.NewBeadsAdapter()
 }
@@ -234,6 +250,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 		DeletionPolicy: string(resolvedDeletionPolicy),
 	}
 	taskProjectionByID := make(map[string]tracker.TaskProjection, len(compiled.Semantic.Tasks))
+	desiredIDs := make(map[string]struct{}, len(compiled.Semantic.Tasks))
 	desired := make([]syncplanner.DesiredProjection, 0, len(compiled.Semantic.Tasks))
 	prior := make([]syncplanner.PriorProjection, 0, len(priorManifest.Entries))
 
@@ -244,9 +261,10 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 		projection := tracker.TaskProjection{
-			ID:      task.ID,
-			Title:   task.Title,
-			Horizon: task.Horizon,
+			ID:              task.ID,
+			Title:           task.Title,
+			CanonicalStatus: task.CanonicalStatus,
+			Horizon:         task.Horizon,
 			Provenance: tracker.TaskProvenance{
 				NodeRef:    task.NodeRef,
 				Path:       compiled.PlanPath,
@@ -257,6 +275,16 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			},
 			Dependencies: append([]string(nil), task.Deps...),
 			Acceptance:   append([]string(nil), task.Accept...),
+		}
+		if len(task.Sections) > 0 {
+			projection.Sections = make([]tracker.TaskProjectionSection, 0, len(task.Sections))
+			for _, section := range task.Sections {
+				projection.Sections = append(projection.Sections, tracker.TaskProjectionSection{
+					Key:   section.Key,
+					Title: section.Title,
+					Body:  append([]string(nil), section.Body...),
+				})
+			}
 		}
 		if len(task.Steps) > 0 {
 			projection.Steps = make([]tracker.TaskProjectionStep, 0, len(task.Steps))
@@ -284,6 +312,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 		taskProjectionByID[task.ID] = projection
+		desiredIDs[task.ID] = struct{}{}
 		desired = append(desired, syncplanner.DesiredProjection{
 			ID:             task.ID,
 			ProjectionHash: hash,
@@ -312,6 +341,48 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 				CompileID:  entry.CompileID,
 			},
 		})
+	}
+	if lister, ok := adapter.(staleTrackerCandidateLister); ok {
+		staleCandidates, err := lister.ListStaleCandidates(ctx, desiredIDs)
+		if err != nil {
+			fmt.Fprintf(stderr, "list stale tracker candidates: %v\n", err)
+			return protocol.ExitInternalError
+		}
+		seenPriorKeys := make(map[string]struct{}, len(prior))
+		for _, entry := range prior {
+			id := strings.TrimSpace(entry.ID)
+			if id == "" {
+				continue
+			}
+			key := id + "\x00" + strings.TrimSpace(entry.ProjectionHash) + "\x00" + strings.TrimSpace(entry.Provenance.NodeRef) + "\x00" + strings.TrimSpace(entry.Provenance.Path)
+			seenPriorKeys[key] = struct{}{}
+		}
+		for _, candidate := range staleCandidates {
+			id := strings.TrimSpace(candidate.ID)
+			if id == "" {
+				continue
+			}
+			if _, alreadyDesired := desiredIDs[id]; alreadyDesired {
+				continue
+			}
+			key := id + "\x00" + strings.TrimSpace(candidate.RemoteID) + "\x00" + strings.TrimSpace(candidate.ProjectionHash) + "\x00" + strings.TrimSpace(candidate.NodeRef) + "\x00" + strings.TrimSpace(candidate.SourcePath)
+			if _, alreadyPrior := seenPriorKeys[key]; alreadyPrior {
+				continue
+			}
+			seenPriorKeys[key] = struct{}{}
+			prior = append(prior, syncplanner.PriorProjection{
+				ID:             id,
+				ProjectionHash: strings.TrimSpace(candidate.ProjectionHash),
+				Provenance: tracker.TaskProvenance{
+					NodeRef:    candidate.NodeRef,
+					Path:       candidate.SourcePath,
+					StartLine:  candidate.SourceStartLine,
+					EndLine:    candidate.SourceEndLine,
+					SourceHash: candidate.SourceHash,
+					CompileID:  candidate.CompileID,
+				},
+			})
+		}
 	}
 
 	ops := syncplanner.PlanSyncOps(desired, prior, resolvedDeletionPolicy)
@@ -429,7 +500,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 			continue
 		}
-		if op.Kind != syncplanner.OperationCreate && op.Kind != syncplanner.OperationUpdate {
+		if op.Kind != syncplanner.OperationCreate && op.Kind != syncplanner.OperationUpdate && op.Kind != syncplanner.OperationNoop {
 			if err := journal.AppendAttempt(resolvedStateDir, journal.OperationAttempt{
 				OperationID: opID,
 				Kind:        string(op.Kind),
@@ -506,6 +577,14 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	if !*dryRun {
+		if result.ConflictCount == 0 {
+			if depSync, ok := adapter.(dependencySyncAdapter); ok {
+				if err := depSync.SyncDependencies(ctx, taskProjectionByID); err != nil {
+					fmt.Fprintf(stderr, "sync task dependencies: %v\n", err)
+					return protocol.ExitInternalError
+				}
+			}
+		}
 		manifestPath, err := adapter.WriteSyncManifest(resolvedStateDir)
 		if err != nil {
 			fmt.Fprintf(stderr, "write sync manifest: %v\n", err)

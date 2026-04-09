@@ -97,6 +97,34 @@ func TestContextPacketKeyDeterministicForEquivalentInput(t *testing.T) {
 	}
 }
 
+func TestContextPacketKeyCanonicalizesDependencySliceHashes(t *testing.T) {
+	input := ContextKeyInput{
+		Level:                           "l2",
+		PlanPath:                        "a/b/PLAN.md",
+		IRVersion:                       "v0.2",
+		DeterminismPolicyVersion:        "v0.1",
+		SemanticDerivationPolicyVersion: "v0.2",
+		TaskID:                          "fixture.task",
+		TaskNodeRef:                     "a/b/PLAN.md|heading|abc#1",
+		TaskSemanticFingerprint:         "fp",
+		NodeSliceHash:                   "hash",
+		DependencySliceHashes:           []string{"dep.c", "dep.a", "dep.b"},
+	}
+
+	keyA := ContextPacketKey(input)
+	input.DependencySliceHashes = []string{"dep.b", "dep.a", "dep.c"}
+	keyB := ContextPacketKey(input)
+	if keyA != keyB {
+		t.Fatalf("expected dependency hash order to be canonicalized")
+	}
+
+	input.DependencySliceHashes = []string{"dep.b", "dep.a", "dep.changed"}
+	keyC := ContextPacketKey(input)
+	if keyA == keyC {
+		t.Fatalf("expected dependency hash changes to affect cache key")
+	}
+}
+
 func TestContextPacketKeyChangesWhenStepStateChanges(t *testing.T) {
 	baseTask := ir.Task{
 		ID:                  "fixture.task",

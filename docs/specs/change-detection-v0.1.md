@@ -5,8 +5,8 @@
 - Policy ID: `change_detection/v0.1`
 - Scope: deterministic classification of task-level semantic changes between compiles
 - Canonical dependencies:
-  - `docs/specs/ir-v0.2.md`
-  - `docs/specs/semantic-derivation-v0.1.md`
+  - `docs/specs/ir-v0.3.md`
+  - `docs/specs/semantic-derivation-v0.4.md`
 
 ## Purpose
 

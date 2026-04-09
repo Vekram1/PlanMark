@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -18,7 +19,7 @@ import (
 	"github.com/vikramoddiraju/planmark/internal/fsio"
 )
 
-const ProjectionSchemaVersionV02 = "v0.2"
+const ProjectionSchemaVersionV03 = "v0.3"
 const BeadsManifestSchemaVersionV01 = SyncManifestSchemaVersionV01
 const BeadsRenderProfile = RenderProfileDefault
 
@@ -35,6 +36,7 @@ type BeadsProjectionPayload struct {
 	ProjectionSchemaVersion string      `json:"projection_schema_version"`
 	ID                      string      `json:"id"`
 	Title                   string      `json:"title"`
+	CanonicalStatus         string      `json:"canonical_status"`
 	Horizon                 string      `json:"horizon,omitempty"`
 	Anchor                  string      `json:"anchor"`
 	SourceRange             SourceRange `json:"source_range"`
@@ -94,6 +96,17 @@ type beadsIssue struct {
 	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
 }
 
+type beadsDependency struct {
+	IssueID     string `json:"issue_id"`
+	DependsOnID string `json:"depends_on_id"`
+	Type        string `json:"type"`
+	Title       string `json:"title,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Priority    int    `json:"priority,omitempty"`
+}
+
+var sourceLinePattern = regexp.MustCompile(`^(?:- )?source: (.+):([0-9]+)-([0-9]+)$`)
+
 type beadsErrorEnvelope struct {
 	Error struct {
 		Code string `json:"code"`
@@ -137,7 +150,7 @@ func (a *BeadsAdapter) Capabilities() TrackerCapabilities {
 			Assignee: true,
 			Priority: true,
 		},
-		ProjectionSchema: ProjectionSchemaVersionV02,
+		ProjectionSchema: ProjectionSchemaVersionV03,
 	}
 }
 
@@ -234,19 +247,22 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		return PushResult{}, fmt.Errorf("hash task projection: %w", err)
 	}
 
-	previousHash, hasPrevious := a.projectionHashByID[task.ID]
-	if hasPrevious && previousHash == currentHash && isLikelyBeadsIssueID(a.remoteIDByID[task.ID]) && !drifted {
-		return PushResult{
-			RemoteID:   a.remoteIDByID[task.ID],
-			Mutated:    false,
-			Noop:       true,
-			Diagnostic: "projection unchanged",
-		}, nil
-	}
-
 	remoteID := strings.TrimSpace(a.remoteIDByID[task.ID])
 	description := strings.Join(rendered.Body, "\n")
 	acceptance := strings.Join(orderedStrings(task.Acceptance), "\n")
+	priority := beadsPriorityForHorizon(task.Horizon)
+	currentIssue := beadsIssue{}
+	if isLikelyBeadsIssueID(remoteID) {
+		issue, err := a.lookupIssue(remoteID)
+		if err != nil && !isBeadsIssueNotFound(err) {
+			return PushResult{}, err
+		}
+		if err == nil {
+			currentIssue = issue
+		} else {
+			remoteID = ""
+		}
+	}
 	if !isLikelyBeadsIssueID(remoteID) {
 		existing, err := a.lookupIssueByExternalRef(task.ID)
 		if err != nil {
@@ -254,18 +270,78 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		}
 		if isLikelyBeadsIssueID(existing.ID) {
 			remoteID = existing.ID
+			currentIssue = existing
 		}
 	}
+
+	previousHash, hasPrevious := a.projectionHashByID[task.ID]
+	if hasPrevious && previousHash == currentHash && isLikelyBeadsIssueID(remoteID) && !drifted {
+		if shouldBeClosed(task) {
+			if isBeadsIssueClosed(currentIssue) {
+				return PushResult{
+					RemoteID:   remoteID,
+					Mutated:    false,
+					Noop:       true,
+					Diagnostic: "projection unchanged",
+				}, nil
+			}
+			if err := a.closeIssue(remoteID, doneCloseReason(task.ID)); err != nil {
+				return PushResult{}, err
+			}
+			a.projectionHashByID[task.ID] = currentHash
+			a.sourceHashByID[task.ID] = payload.SourceHash
+			a.provenanceByID[task.ID] = normalizedProvenance(task.Provenance)
+			a.remoteIDByID[task.ID] = remoteID
+			return PushResult{
+				RemoteID:   remoteID,
+				Mutated:    true,
+				Diagnostic: "closed tracker issue for canonically completed task",
+			}, nil
+		}
+		if isBeadsIssueClosed(currentIssue) {
+			if err := a.reopenIssue(remoteID, reopenReason(task.ID)); err != nil {
+				return PushResult{}, err
+			}
+			if _, err := a.updateIssueWithExternalRef(remoteID, task.ID, rendered.Title, description, acceptance, priority); err != nil {
+				return PushResult{}, err
+			}
+			a.projectionHashByID[task.ID] = currentHash
+			a.sourceHashByID[task.ID] = payload.SourceHash
+			a.provenanceByID[task.ID] = normalizedProvenance(task.Provenance)
+			a.remoteIDByID[task.ID] = remoteID
+			return PushResult{
+				RemoteID:   remoteID,
+				Mutated:    true,
+				Diagnostic: "reopened closed tracker issue with unchanged projection",
+			}, nil
+		}
+		return PushResult{
+			RemoteID:   remoteID,
+			Mutated:    false,
+			Noop:       true,
+			Diagnostic: "projection unchanged",
+		}, nil
+	}
 	if isLikelyBeadsIssueID(remoteID) {
-		if _, err := a.updateIssueWithExternalRef(remoteID, task.ID, rendered.Title, description, acceptance); err != nil {
+		if isBeadsIssueClosed(currentIssue) && !shouldBeClosed(task) {
+			if err := a.reopenIssue(remoteID, reopenReason(task.ID)); err != nil {
+				return PushResult{}, err
+			}
+		}
+		if _, err := a.updateIssueWithExternalRef(remoteID, task.ID, rendered.Title, description, acceptance, priority); err != nil {
 			return PushResult{}, err
 		}
 	} else {
-		issue, err := a.createIssueWithExternalRef(task.ID, rendered.Title, description, acceptance)
+		issue, err := a.createIssueWithExternalRef(task.ID, rendered.Title, description, acceptance, priority)
 		if err != nil {
 			return PushResult{}, err
 		}
 		remoteID = issue.ID
+	}
+	if shouldBeClosed(task) {
+		if err := a.closeIssue(remoteID, doneCloseReason(task.ID)); err != nil && !isBeadsNothingToDo(err) {
+			return PushResult{}, err
+		}
 	}
 	a.projectionHashByID[task.ID] = currentHash
 	a.sourceHashByID[task.ID] = payload.SourceHash
@@ -283,6 +359,93 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		Noop:       false,
 		Diagnostic: diagnostic,
 	}, nil
+}
+
+func (a *BeadsAdapter) SyncDependencies(_ context.Context, tasks map[string]TaskProjection) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	taskIDs := make([]string, 0, len(tasks))
+	for id := range tasks {
+		taskIDs = append(taskIDs, id)
+	}
+	sort.Strings(taskIDs)
+
+	for _, taskID := range taskIDs {
+		task := tasks[taskID]
+		issueID := strings.TrimSpace(a.remoteIDByID[taskID])
+		if !isLikelyBeadsIssueID(issueID) {
+			continue
+		}
+
+		desired := make(map[string]struct{}, len(task.Dependencies))
+		for _, depID := range task.Dependencies {
+			depID = strings.TrimSpace(depID)
+			if depID == "" || depID == taskID {
+				continue
+			}
+			depIssueID := strings.TrimSpace(a.remoteIDByID[depID])
+			if !isLikelyBeadsIssueID(depIssueID) {
+				existing, err := a.lookupIssueByExternalRef(depID)
+				if err != nil {
+					return fmt.Errorf("lookup dependency issue %q: %w", depID, err)
+				}
+				if isLikelyBeadsIssueID(existing.ID) {
+					depIssueID = existing.ID
+					a.remoteIDByID[depID] = depIssueID
+				}
+			}
+			if !isLikelyBeadsIssueID(depIssueID) {
+				continue
+			}
+			desired[depIssueID] = struct{}{}
+		}
+
+		currentDeps, err := a.listDependencies(issueID)
+		if err != nil {
+			return fmt.Errorf("list beads dependencies for %q: %w", taskID, err)
+		}
+		current := make(map[string]struct{}, len(currentDeps))
+		for _, dep := range currentDeps {
+			if strings.TrimSpace(dep.Type) != "" && dep.Type != "blocks" {
+				continue
+			}
+			targetID := strings.TrimSpace(dep.DependsOnID)
+			if targetID == "" || targetID == issueID {
+				continue
+			}
+			current[targetID] = struct{}{}
+		}
+
+		toAdd := make([]string, 0)
+		for depIssueID := range desired {
+			if _, ok := current[depIssueID]; !ok {
+				toAdd = append(toAdd, depIssueID)
+			}
+		}
+		sort.Strings(toAdd)
+		for _, depIssueID := range toAdd {
+			if err := a.addDependency(issueID, depIssueID); err != nil {
+				return fmt.Errorf("add beads dependency %q -> %q: %w", issueID, depIssueID, err)
+			}
+		}
+
+		toRemove := make([]string, 0)
+		for depIssueID := range current {
+			if _, ok := desired[depIssueID]; !ok {
+				toRemove = append(toRemove, depIssueID)
+			}
+		}
+		sort.Strings(toRemove)
+		for _, depIssueID := range toRemove {
+			if err := a.removeDependency(issueID, depIssueID); err != nil {
+				return fmt.Errorf("remove beads dependency %q -> %q: %w", issueID, depIssueID, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (a *BeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string) (PushResult, error) {
@@ -305,13 +468,13 @@ func (a *BeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string
 		}, nil
 	}
 	if err := a.closeIssue(remoteID, staleCloseReason(reason)); err != nil {
-		if isBeadsIssueNotFound(err) {
+		if isBeadsIssueNotFound(err) || isBeadsNothingToDo(err) {
 			a.deleteTaskState(id)
 			return PushResult{
 				RemoteID:   remoteID,
 				Noop:       true,
 				Mutated:    false,
-				Diagnostic: "tracker issue already absent for stale task",
+				Diagnostic: "tracker issue already closed or absent for stale task",
 			}, nil
 		}
 		return PushResult{}, err
@@ -324,14 +487,17 @@ func (a *BeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string
 	}, nil
 }
 
-func (a *BeadsAdapter) createIssue(title string, description string, acceptance string) (beadsIssue, error) {
-	return a.createIssueWithExternalRef("", title, description, acceptance)
+func (a *BeadsAdapter) createIssue(title string, description string, acceptance string, priority int) (beadsIssue, error) {
+	return a.createIssueWithExternalRef("", title, description, acceptance, priority)
 }
 
-func (a *BeadsAdapter) createIssueWithExternalRef(externalRef string, title string, description string, acceptance string) (beadsIssue, error) {
+func (a *BeadsAdapter) createIssueWithExternalRef(externalRef string, title string, description string, acceptance string, priority int) (beadsIssue, error) {
 	args := []string{"create", "--title", title, "--type", "task", "--json"}
 	if strings.TrimSpace(externalRef) != "" {
 		args = append(args, "--external-ref", externalRef)
+	}
+	if priority > 0 {
+		args = append(args, "--priority", fmt.Sprintf("%d", priority))
 	}
 	createDescription := description
 	if strings.TrimSpace(acceptance) != "" {
@@ -358,14 +524,17 @@ func (a *BeadsAdapter) createIssueWithExternalRef(externalRef string, title stri
 	return issue, nil
 }
 
-func (a *BeadsAdapter) updateIssue(id string, title string, description string, acceptance string) (beadsIssue, error) {
-	return a.updateIssueWithExternalRef(id, "", title, description, acceptance)
+func (a *BeadsAdapter) updateIssue(id string, title string, description string, acceptance string, priority int) (beadsIssue, error) {
+	return a.updateIssueWithExternalRef(id, "", title, description, acceptance, priority)
 }
 
-func (a *BeadsAdapter) updateIssueWithExternalRef(id string, externalRef string, title string, description string, acceptance string) (beadsIssue, error) {
+func (a *BeadsAdapter) updateIssueWithExternalRef(id string, externalRef string, title string, description string, acceptance string, priority int) (beadsIssue, error) {
 	args := []string{"update", id, "--title", title, "--description", description, "--acceptance-criteria", acceptance}
 	if strings.TrimSpace(externalRef) != "" {
 		args = append(args, "--external-ref", externalRef)
+	}
+	if priority > 0 {
+		args = append(args, "--priority", fmt.Sprintf("%d", priority))
 	}
 	args = append(args, "--json")
 	output, err := a.runBr(args...)
@@ -401,13 +570,9 @@ func (a *BeadsAdapter) lookupIssueByExternalRef(externalRef string) (beadsIssue,
 	if strings.TrimSpace(externalRef) == "" {
 		return beadsIssue{}, nil
 	}
-	output, err := a.runBr("list", "--all", "--json")
+	issues, err := a.listIssues("list", "--all", "--json")
 	if err != nil {
-		return beadsIssue{}, fmt.Errorf("br list: %w", err)
-	}
-	var issues []beadsIssue
-	if err := json.Unmarshal(output, &issues); err != nil {
-		return beadsIssue{}, fmt.Errorf("decode br list output: %w", err)
+		return beadsIssue{}, err
 	}
 	for _, issue := range issues {
 		if strings.TrimSpace(issue.ExternalRef) == strings.TrimSpace(externalRef) {
@@ -417,10 +582,148 @@ func (a *BeadsAdapter) lookupIssueByExternalRef(externalRef string) (beadsIssue,
 	return beadsIssue{}, nil
 }
 
+func (a *BeadsAdapter) listDependencies(id string) ([]beadsDependency, error) {
+	output, err := a.runBr("dep", "list", id, "--json")
+	if err != nil {
+		return nil, fmt.Errorf("br dep list %s: %w", id, err)
+	}
+	var deps []beadsDependency
+	if err := json.Unmarshal(output, &deps); err != nil {
+		return nil, fmt.Errorf("decode br dep list output: %w", err)
+	}
+	return deps, nil
+}
+
+func (a *BeadsAdapter) addDependency(issueID string, dependsOnID string) error {
+	if _, err := a.runBr("dep", "add", issueID, dependsOnID, "--json"); err != nil {
+		return fmt.Errorf("br dep add %s %s: %w", issueID, dependsOnID, err)
+	}
+	return nil
+}
+
+func (a *BeadsAdapter) removeDependency(issueID string, dependsOnID string) error {
+	if _, err := a.runBr("dep", "remove", issueID, dependsOnID, "--json"); err != nil {
+		return fmt.Errorf("br dep remove %s %s: %w", issueID, dependsOnID, err)
+	}
+	return nil
+}
+
+func (a *BeadsAdapter) ListStaleCandidates(_ context.Context, desiredIDs map[string]struct{}) ([]SyncManifestEntry, error) {
+	issues, err := a.listIssues("list", "--all", "--json")
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]SyncManifestEntry, 0, len(issues))
+	for _, issue := range issues {
+		externalRef := strings.TrimSpace(issue.ExternalRef)
+		if externalRef == "" {
+			continue
+		}
+		if _, desired := desiredIDs[externalRef]; desired {
+			continue
+		}
+		candidates = append(candidates, SyncManifestEntry{
+			ID:       externalRef,
+			RemoteID: strings.TrimSpace(issue.ID),
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].ID != candidates[j].ID {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].RemoteID < candidates[j].RemoteID
+	})
+	return candidates, nil
+}
+
+func (a *BeadsAdapter) ListCleanupCandidates(_ context.Context, planPath string, desiredIDs map[string]struct{}) ([]CleanupCandidate, error) {
+	issues, err := a.listIssues("list", "--status", "open", "--json")
+	if err != nil {
+		return nil, err
+	}
+	normalizedPlanPath := normalizeCleanupPath(planPath)
+	candidates := make([]CleanupCandidate, 0, len(issues))
+	for _, issue := range issues {
+		externalRef := strings.TrimSpace(issue.ExternalRef)
+		if externalRef != "" {
+			if _, desired := desiredIDs[externalRef]; desired {
+				continue
+			}
+			candidates = append(candidates, CleanupCandidate{
+				RemoteID:    strings.TrimSpace(issue.ID),
+				Title:       strings.TrimSpace(issue.Title),
+				ExternalRef: externalRef,
+				Reason:      "external_ref is missing from current plan",
+			})
+			continue
+		}
+		sourcePath := parsePlanSourcePath(issue.Description)
+		if sourcePath == "" {
+			continue
+		}
+		normalizedSourcePath := normalizeCleanupPath(sourcePath)
+		if normalizedSourcePath == "" || normalizedSourcePath == normalizedPlanPath {
+			continue
+		}
+		candidates = append(candidates, CleanupCandidate{
+			RemoteID:   strings.TrimSpace(issue.ID),
+			Title:      strings.TrimSpace(issue.Title),
+			SourcePath: sourcePath,
+			Reason:     "plan-derived issue points at a different plan file",
+		})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Reason != candidates[j].Reason {
+			return candidates[i].Reason < candidates[j].Reason
+		}
+		if candidates[i].ExternalRef != candidates[j].ExternalRef {
+			return candidates[i].ExternalRef < candidates[j].ExternalRef
+		}
+		if candidates[i].SourcePath != candidates[j].SourcePath {
+			return candidates[i].SourcePath < candidates[j].SourcePath
+		}
+		return candidates[i].RemoteID < candidates[j].RemoteID
+	})
+	return candidates, nil
+}
+
+func (a *BeadsAdapter) CleanupCandidate(_ context.Context, candidate CleanupCandidate) error {
+	if strings.TrimSpace(candidate.RemoteID) == "" {
+		return fmt.Errorf("cleanup candidate requires remote id")
+	}
+	if err := a.closeIssue(candidate.RemoteID, cleanupCloseReason(candidate)); err != nil {
+		if isBeadsIssueNotFound(err) || isBeadsNothingToDo(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (a *BeadsAdapter) listIssues(args ...string) ([]beadsIssue, error) {
+	output, err := a.runBr(args...)
+	if err != nil {
+		return nil, fmt.Errorf("br list: %w", err)
+	}
+	var issues []beadsIssue
+	if err := json.Unmarshal(output, &issues); err != nil {
+		return nil, fmt.Errorf("decode br list output: %w", err)
+	}
+	return issues, nil
+}
+
 func (a *BeadsAdapter) closeIssue(id string, reason string) error {
 	args := []string{"close", id, "--reason", reason, "--json"}
 	if _, err := a.runBr(args...); err != nil {
 		return fmt.Errorf("br close %s: %w", id, err)
+	}
+	return nil
+}
+
+func (a *BeadsAdapter) reopenIssue(id string, reason string) error {
+	args := []string{"reopen", id, "--reason", reason, "--json"}
+	if _, err := a.runBr(args...); err != nil {
+		return fmt.Errorf("br reopen %s: %w", id, err)
 	}
 	return nil
 }
@@ -469,12 +772,93 @@ func isBeadsIssueNotFound(err error) bool {
 	return strings.Contains(lower, "issue_not_found") || strings.Contains(lower, "issue not found")
 }
 
+func isBeadsNothingToDo(err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), `"code": "NOTHING_TO_DO"`) || strings.Contains(err.Error(), `"code":"NOTHING_TO_DO"`) {
+		return true
+	}
+	raw := err.Error()
+	if idx := strings.Index(raw, "{"); idx >= 0 {
+		raw = raw[idx:]
+	}
+	var payload beadsErrorEnvelope
+	if jsonErr := json.Unmarshal([]byte(raw), &payload); jsonErr == nil {
+		return strings.EqualFold(strings.TrimSpace(payload.Error.Code), "NOTHING_TO_DO")
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "nothing_to_do") || strings.Contains(lower, "nothing to do")
+}
+
 func staleCloseReason(reason string) string {
 	trimmed := strings.TrimSpace(reason)
 	if trimmed == "" {
 		return "PlanMark sync marked this task stale"
 	}
 	return "PlanMark sync marked this task stale: " + trimmed
+}
+
+func reopenReason(taskID string) string {
+	trimmed := strings.TrimSpace(taskID)
+	if trimmed == "" {
+		return "PlanMark sync restored current plan task"
+	}
+	return "PlanMark sync restored current plan task: " + trimmed
+}
+
+func doneCloseReason(taskID string) string {
+	trimmed := strings.TrimSpace(taskID)
+	if trimmed == "" {
+		return "PlanMark sync marked this task done in the canonical plan"
+	}
+	return "PlanMark sync marked this task done in the canonical plan: " + trimmed
+}
+
+func isBeadsIssueClosed(issue beadsIssue) bool {
+	return strings.EqualFold(strings.TrimSpace(issue.Status), "closed")
+}
+
+func cleanupCloseReason(candidate CleanupCandidate) string {
+	reason := strings.TrimSpace(candidate.Reason)
+	if reason == "" {
+		reason = "cleanup candidate"
+	}
+	return "PlanMark cleanup closed non-plan bead: " + reason
+}
+
+func parsePlanSourcePath(description string) string {
+	for _, line := range strings.Split(description, "\n") {
+		matches := sourceLinePattern.FindStringSubmatch(strings.TrimSpace(line))
+		if len(matches) == 4 {
+			return strings.TrimSpace(matches[1])
+		}
+	}
+	return ""
+}
+
+func normalizeCleanupPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(trimmed); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(trimmed)
+}
+
+func beadsPriorityForHorizon(horizon string) int {
+	switch strings.ToLower(strings.TrimSpace(horizon)) {
+	case "now":
+		return 1
+	case "next":
+		return 2
+	case "later":
+		return 3
+	default:
+		return 4
+	}
 }
 
 func buildProjectionPayloadFromRendered(task TaskProjection, rendered RenderedTask) (BeadsProjectionPayload, error) {
@@ -496,13 +880,14 @@ func buildProjectionPayloadFromRendered(task TaskProjection, rendered RenderedTa
 	}
 	projectionVersion := strings.TrimSpace(task.ProjectionVersion)
 	if projectionVersion == "" {
-		projectionVersion = ProjectionSchemaVersionV02
+		projectionVersion = ProjectionSchemaVersionV03
 	}
 
 	return BeadsProjectionPayload{
 		ProjectionSchemaVersion: projectionVersion,
 		ID:                      task.ID,
 		Title:                   rendered.Title,
+		CanonicalStatus:         normalizeCanonicalTaskStatus(task.CanonicalStatus),
 		Horizon:                 strings.TrimSpace(task.Horizon),
 		Anchor:                  anchor,
 		SourceRange: SourceRange{
@@ -516,6 +901,10 @@ func buildProjectionPayloadFromRendered(task TaskProjection, rendered RenderedTa
 		Steps:            buildBeadsStepsFromRendered(rendered, task.Steps),
 		EvidenceNodeRefs: orderedEvidenceRefs(task.Evidence),
 	}, nil
+}
+
+func shouldBeClosed(task TaskProjection) bool {
+	return normalizeCanonicalTaskStatus(task.CanonicalStatus) == "done"
 }
 
 func (a *BeadsAdapter) DetectProjectionDrift(task TaskProjection) (bool, error) {

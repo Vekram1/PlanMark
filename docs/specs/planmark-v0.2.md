@@ -19,7 +19,7 @@ PlanMark defines a deterministic, lossless pipeline from `PLAN.md` into machine-
 - Semantic derivation promotes only policy-approved task shapes and metadata into machine-actionable task graph semantics.
 - Free-form Markdown remains preserved even when it is not promoted into typed task semantics.
 - Strictness boundary: strict execution gating is command-boundary behavior, not global parse behavior.
-- Semantic derivation is policy-versioned (`semantic_derivation/v0.1`) and independent from IR schema versioning.
+- Semantic derivation is policy-versioned (`semantic_derivation/v0.4`) and independent from IR schema versioning.
 
 ## Authoring Primitives
 
@@ -30,6 +30,7 @@ PlanMark authoring supports mixed Markdown content, task-shaped blocks, and line
 - Metadata annotations use line-oriented `@key value` forms attached deterministically to a task or section scope.
 - Canonical metadata keys include (initial set):
   - `@id`
+  - `@status`
   - `@horizon`
   - `@deps`
   - `@accept`
@@ -193,7 +194,8 @@ Notes:
 ## Tracker Authority Split
 
 - PLAN/IR defines structure and intent.
-- Tracker systems (for example Beads) own runtime-ish overlays only (status, assignee, priority) under explicit reconcile rules.
+- PLAN/IR also owns canonical task completion state (`@status open|done`).
+- Tracker systems (for example Beads) own runtime-ish overlays only (tracker workflow status, assignee, priority) under explicit reconcile rules.
 - Reconcile planning is deterministic and policy-driven; destructive behavior is opt-in by explicit deletion policy.
 
 ## Change and Replanning Principles
@@ -218,9 +220,9 @@ Notes:
 - Built-in rendering profiles are deterministic named policies (`default`, `compact`, `agentic`, `handoff`) layered on top of the tracker-neutral projection.
 - Future adapter-local template names, if introduced, are expected to be deterministic aliases over those built-in profiles plus adapter-local field layout choices; they must not become arbitrary user-authored text templates in the canonical sync path.
 - The current proven adapters are `beads`, a GitHub Issues proof adapter, and a Linear proof adapter.
-- Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
+- Current Beads projection payloads expose the Beads-rendered subset of that projection layer, including `horizon`, structured `sections`, ordered `dependencies`, ordered `steps`, and ordered `evidence_node_refs`.
 - The GitHub and Linear proof adapters render deterministic markdown issue title/body payloads from the same tracker-neutral projection and render-profile layer.
-- Sync planning hashes the canonical semantic tracker-neutral projection, so reserved semantic fields for future adapters, such as scoped `sections` and evidence `kind`, still participate in change detection even before the Beads renderer consumes them directly.
+- Sync planning hashes the canonical semantic tracker-neutral projection, so structured semantic fields such as scoped `sections` and evidence `kind` participate in change detection before every adapter-specific rendering pass.
 - Provenance remains part of the rendered/audited tracker payload, but provenance-only movement such as line-range churn or source slice re-addressing does not by itself force routine tracker updates for a stable task identity.
 - The staged adapter roadmap is now:
   - markdown-issue adapters first (`linear`, `jira` phase 1 basic issue rendering)
@@ -229,8 +231,8 @@ Notes:
 
 ## Semantic Derivation Policy Link
 
-- Source of semantic derivation rules: `docs/specs/semantic-derivation-v0.1.md`
-- Policy identifier: `semantic_derivation/v0.1`
+- Source of semantic derivation rules: `docs/specs/semantic-derivation-v0.4.md`
+- Policy identifier: `semantic_derivation/v0.4`
 - Contract: identical Source IR bytes + identical semantic policy version produce byte-stable Semantic IR.
 - The semantic policy defines deterministic promotion for checkbox tasks, heading tasks, scope-owned metadata, nested checklist steps, and scoped evidence retention.
 

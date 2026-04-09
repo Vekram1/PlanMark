@@ -157,7 +157,7 @@ func renderStepBlock(steps []TaskProjectionStep, heading string) []string {
 func renderSectionBlocks(sections []TaskProjectionSection, headingPrefix string) []string {
 	lines := make([]string, 0, len(sections)*3)
 	for _, section := range sections {
-		body := normalizedOrderedStrings(section.Body)
+		body := normalizedSectionBody(section.Body)
 		if len(body) == 0 {
 			continue
 		}
@@ -244,7 +244,7 @@ func renderAgenticHeader(task TaskProjection) []string {
 func renderCompactSections(sections []TaskProjectionSection) []string {
 	lines := make([]string, 0, len(sections))
 	for _, section := range sections {
-		body := normalizedOrderedStrings(section.Body)
+		body := normalizedSectionBody(section.Body)
 		if len(body) == 0 {
 			continue
 		}
@@ -252,7 +252,14 @@ func renderCompactSections(sections []TaskProjectionSection) []string {
 		if title == "" {
 			title = "notes"
 		}
-		lines = append(lines, title+": "+strings.Join(body, " "))
+		compactBody := make([]string, 0, len(body))
+		for _, line := range body {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			compactBody = append(compactBody, line)
+		}
+		lines = append(lines, title+": "+strings.Join(compactBody, " "))
 	}
 	return lines
 }

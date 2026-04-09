@@ -1,7 +1,8 @@
 {
-  "projection_schema_version": "v0.2",
+  "projection_schema_version": "v0.3",
   "id": "fixture.task.golden_projection",
   "title": "Golden projection payload",
+  "canonical_status": "open",
   "horizon": "now",
   "anchor": "testdata/plans/mixed.md#L21",
   "source_range": {

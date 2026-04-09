@@ -188,3 +188,41 @@ func TestGitHubPullNormalizesRequestedIDs(t *testing.T) {
 		t.Fatalf("expected normalized runtime lookup key, got %#v", got)
 	}
 }
+
+func TestGitHubPushClosesDoneTaskAndReopensOpenTask(t *testing.T) {
+	adapter := NewGitHubAdapter()
+	ctx := context.Background()
+	task := fixtureRenderedTask()
+
+	first, err := adapter.PushTask(ctx, task)
+	if err != nil {
+		t.Fatalf("first push: %v", err)
+	}
+	if !first.Mutated {
+		t.Fatalf("expected first push to mutate")
+	}
+
+	doneTask := task
+	doneTask.CanonicalStatus = "done"
+	closed, err := adapter.PushTask(ctx, doneTask)
+	if err != nil {
+		t.Fatalf("close done task: %v", err)
+	}
+	if !closed.Mutated || closed.Noop {
+		t.Fatalf("expected canonical done push to mutate tracker state, got %#v", closed)
+	}
+	if adapter.runtimeByID[strings.TrimSpace(task.ID)].Status != "closed" {
+		t.Fatalf("expected github runtime status closed, got %#v", adapter.runtimeByID[strings.TrimSpace(task.ID)])
+	}
+
+	reopened, err := adapter.PushTask(ctx, task)
+	if err != nil {
+		t.Fatalf("reopen open task: %v", err)
+	}
+	if !reopened.Mutated || reopened.Noop {
+		t.Fatalf("expected reopening open task to mutate tracker state, got %#v", reopened)
+	}
+	if adapter.runtimeByID[strings.TrimSpace(task.ID)].Status != "open" {
+		t.Fatalf("expected github runtime status open, got %#v", adapter.runtimeByID[strings.TrimSpace(task.ID)])
+	}
+}

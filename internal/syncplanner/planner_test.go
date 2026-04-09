@@ -123,7 +123,7 @@ func TestProjectionHashForTaskIncludesStructuredProjectionFields(t *testing.T) {
 	}
 
 	sameSemanticDefaultVersion := base
-	sameSemanticDefaultVersion.ProjectionVersion = tracker.ProjectionSchemaVersionV02
+	sameSemanticDefaultVersion.ProjectionVersion = tracker.ProjectionSchemaVersionV03
 
 	baseHash, err := ProjectionHashForTask(base)
 	if err != nil {

@@ -39,6 +39,7 @@ type TaskProjectionSection struct {
 type TaskProjectionV2 struct {
 	ID                string
 	Title             string
+	CanonicalStatus   string
 	Horizon           string
 	Anchor            string
 	Provenance        TaskProvenance
@@ -93,6 +94,7 @@ type TrackerCapabilities struct {
 type canonicalTaskProjection struct {
 	ID                string                   `json:"id"`
 	Title             string                   `json:"title,omitempty"`
+	CanonicalStatus   string                   `json:"canonical_status"`
 	Horizon           string                   `json:"horizon,omitempty"`
 	Anchor            string                   `json:"anchor,omitempty"`
 	Dependencies      []string                 `json:"dependencies,omitempty"`
@@ -121,6 +123,7 @@ func canonicalizeTaskProjection(task TaskProjection) canonicalTaskProjection {
 	return canonicalTaskProjection{
 		ID:                strings.TrimSpace(task.ID),
 		Title:             strings.TrimSpace(task.Title),
+		CanonicalStatus:   normalizeCanonicalTaskStatus(task.CanonicalStatus),
 		Horizon:           strings.TrimSpace(task.Horizon),
 		Anchor:            strings.TrimSpace(task.Anchor),
 		Dependencies:      normalizedOrderedStrings(task.Dependencies),
@@ -135,9 +138,22 @@ func canonicalizeTaskProjection(task TaskProjection) canonicalTaskProjection {
 func normalizedProjectionVersion(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return ProjectionSchemaVersionV02
+		return ProjectionSchemaVersionV03
 	}
 	return trimmed
+}
+
+func normalizeCanonicalTaskStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "done":
+		return "done"
+	default:
+		return "open"
+	}
+}
+
+func taskShouldBeClosed(task TaskProjection) bool {
+	return normalizeCanonicalTaskStatus(task.CanonicalStatus) == "done"
 }
 
 func normalizedOrderedStrings(values []string) []string {
@@ -188,7 +204,7 @@ func normalizedEvidence(evidence []TaskProjectionEvidence) []TaskProjectionEvide
 func normalizedSections(sections []TaskProjectionSection) []TaskProjectionSection {
 	out := make([]TaskProjectionSection, 0, len(sections))
 	for _, section := range sections {
-		body := normalizedOrderedStrings(section.Body)
+		body := normalizedSectionBody(section.Body)
 		key := strings.TrimSpace(section.Key)
 		title := strings.TrimSpace(section.Title)
 		if key == "" && title == "" && len(body) == 0 {
@@ -199,6 +215,34 @@ func normalizedSections(sections []TaskProjectionSection) []TaskProjectionSectio
 			Title: title,
 			Body:  body,
 		})
+	}
+	return out
+}
+
+func normalizedSectionBody(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	out := make([]string, 0, end-start)
+	lastBlank := false
+	for _, line := range lines[start:end] {
+		normalized := strings.TrimRight(line, " \t")
+		isBlank := strings.TrimSpace(normalized) == ""
+		if isBlank {
+			if lastBlank {
+				continue
+			}
+			lastBlank = true
+			out = append(out, "")
+			continue
+		}
+		lastBlank = false
+		out = append(out, normalized)
 	}
 	return out
 }
@@ -249,3 +293,11 @@ type SyncManifest struct {
 
 type BeadsManifestEntry = SyncManifestEntry
 type BeadsSyncManifest = SyncManifest
+
+type CleanupCandidate struct {
+	RemoteID    string `json:"remote_id"`
+	Title       string `json:"title,omitempty"`
+	ExternalRef string `json:"external_ref,omitempty"`
+	SourcePath  string `json:"source_path,omitempty"`
+	Reason      string `json:"reason"`
+}

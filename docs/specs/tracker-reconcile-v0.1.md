@@ -7,7 +7,8 @@
 - Canonical dependencies:
   - `docs/specs/planmark-v0.2.md`
   - `docs/specs/change-detection-v0.1.md`
-  - `docs/specs/semantic-derivation-v0.1.md`
+  - `docs/specs/semantic-derivation-v0.4.md`
+  - `docs/specs/tracker-reconcile-test-matrix-v0.1.md`
 
 ## Purpose
 
@@ -19,8 +20,9 @@ Define safe and deterministic reconcile behavior so PLAN edits and tracker state
   - task identity
   - structure/graph semantics
   - canonical intent fields
+  - canonical completion state (`@status open|done`)
 - Tracker is authoritative only for approved runtime overlays:
-  - status
+  - tracker workflow status within the open task lifecycle
   - assignee
   - priority
 
@@ -76,13 +78,16 @@ The reconcile policy is intentionally tracker-neutral even when the first implem
 - Each adapter also exposes deterministic `TrackerCapabilities` so future rendering/template policy can validate backend support without hardcoding tracker assumptions into the compiler.
 - Tracker adapters choose how to render that semantic task into the target system's available fields.
 - Runtime overlays remain tracker-owned regardless of rendering shape.
-- The current Beads projection payload schema is `v0.2` and is built from that projection layer, carrying the subset of adapter-neutral task fields that Beads currently renders:
+- The current Beads projection payload schema is `v0.3` and is built from that projection layer, carrying the subset of adapter-neutral task fields that Beads currently renders:
+  - `canonical_status`
   - `horizon`
   - ordered `dependencies`
   - ordered execution `steps`
   - ordered `evidence_node_refs`
   - provenance/source mapping and acceptance digest
-- Sync planning hashes the canonical semantic `TaskProjectionV2`, including reserved semantic fields such as structured `sections` and evidence `kind`, so semantic projection changes are still detected before every adapter renders every field.
+- For the `beads` adapter, canonical `@deps` should also reconcile into native Beads `blocks` edges so Beads Viewer (`bv`) continues to operate over the same dependency graph that PlanMark compiled from the plan.
+- For the `beads` adapter, canonical `@horizon` should deterministically seed native Beads priority for ranking (`now -> 1`, `next -> 2`, `later -> 3`, fallback `4`) so `bv` ordering better reflects current plan intent.
+- Sync planning hashes the canonical semantic `TaskProjectionV2`, including structured semantic fields such as `sections` and evidence `kind`, so semantic projection changes are still detected before every adapter renders every field.
 - Provenance fields (`node_ref`, source path/range, source hash, compile id) remain visible in tracker payloads and manifests for audit/debugging, but they do not by themselves force routine `update` or `mark_stale` operations for an otherwise unchanged task identity.
 
 Current capability descriptor categories:
@@ -230,3 +235,20 @@ An adapter should only be treated as proven when all of the following are true:
 
 - Multi-tracker conflict matrices in MVP.
 - Implicit destructive tracker mutation defaults.
+
+## Verification And Regression Coverage
+
+The reconcile policy is not complete without explicit seam coverage across:
+
+- source plan changes
+- semantic derivation
+- tracker-neutral projection
+- local manifest memory
+- live tracker reality
+- cleanup interactions
+
+The required invariant and scenario coverage for that seam behavior is defined in:
+
+- `docs/specs/tracker-reconcile-test-matrix-v0.1.md`
+
+That test matrix is part of the practical reconcile contract. It exists because reconcile failures often happen between individually reasonable components rather than inside one obviously broken function.

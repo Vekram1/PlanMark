@@ -64,6 +64,8 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runExplain(args[1:], stdout, stderr)
 	case "sync":
 		return runSync(args[1:], stdout, stderr)
+	case "cleanup":
+		return runCleanup(args[1:], stdout, stderr)
 	case "changes":
 		return runChanges(args[1:], stdout, stderr)
 	case "propose-change":
@@ -120,6 +122,8 @@ func runHelp(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runExplain([]string{"--help"}, stdout, stdout)
 	case "sync":
 		return runSync([]string{"--help"}, stdout, stdout)
+	case "cleanup":
+		return runCleanup([]string{"--help"}, stdout, stdout)
 	case "changes":
 		return runChanges([]string{"--help"}, stdout, stdout)
 	case "propose-change":
@@ -159,13 +163,14 @@ func renderRootHelp(w io.Writer) {
 		"  compile         Compile PLAN.md into deterministic IR JSON",
 		"  doctor          Check plan validity and readiness under a strictness profile",
 		"  query           List tasks with optional readiness and horizon filters",
-		"  context         Build a deterministic task context packet",
+		"  context         Build a deterministic need-based task context packet",
 		"  open            Show exact source scope for a task or node reference",
 		"  explain         Explain why a task looks the way it does",
-		"  handoff         Build an agent-oriented handoff packet",
+		"  handoff         Build a deterministic handoff packet for agent transfer",
 		"  changes         Compare current plan state against prior compile or git ref",
 		"  pack            Export plan and packets into a portable pack",
 		"  sync            Project tasks into a tracker without making it canonical",
+		"  cleanup         Close plan-derived Beads issues that do not belong to the current PLAN.md",
 		"  propose-change  Produce a deterministic plan delta proposal",
 		"  apply-change    Apply a deterministic plan delta",
 		"  id              Generate a deterministic task id from a title",
@@ -223,7 +228,7 @@ func runVersion(args []string, stdout io.Writer, stderr io.Writer) int {
 		Status:        "ok",
 		Data: versionData{
 			CLIVersion:              CLIVersion,
-			SupportedSchemaVersions: []string{"planmark-v0.2", "ir-v0.2"},
+			SupportedSchemaVersions: []string{"planmark-v0.2", "ir-v0.2", "ir-v0.3"},
 			SupportedPolicyVersions: supportedPoliciesFromRegistry(policy.NewRegistry()),
 			ExitCodeTaxonomy:        exitCodeTaxonomy(),
 		},

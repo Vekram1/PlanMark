@@ -77,6 +77,37 @@ func TestRenderTaskCompactProfile(t *testing.T) {
 	}
 }
 
+func TestRenderTaskDefaultProfilePreservesSectionParagraphBreaks(t *testing.T) {
+	task := fixtureRenderedTask()
+	task.Sections = []TaskProjectionSection{
+		{
+			Key:   "details",
+			Title: "Details",
+			Body: []string{
+				"First paragraph.",
+				"",
+				"Second paragraph.",
+			},
+		},
+	}
+	task.Steps = nil
+	task.Evidence = nil
+
+	rendered, err := RenderTask(task, NewBeadsAdapter().Capabilities(), RenderProfileDefault)
+	if err != nil {
+		t.Fatalf("render default profile: %v", err)
+	}
+
+	if !reflect.DeepEqual(rendered.Body[:4], []string{
+		"## Details",
+		"First paragraph.",
+		"",
+		"Second paragraph.",
+	}) {
+		t.Fatalf("expected rendered body to preserve blank line in section, got %#v", rendered.Body)
+	}
+}
+
 func TestRenderTaskAgenticProfileUsesNativeStepsWhenAvailable(t *testing.T) {
 	task := fixtureRenderedTask()
 	caps := NewBeadsAdapter().Capabilities()
