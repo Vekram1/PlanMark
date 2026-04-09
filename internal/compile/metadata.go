@@ -27,6 +27,7 @@ var (
 
 var knownMetadataKeys = map[string]struct{}{
 	"id":        {},
+	"status":    {},
 	"horizon":   {},
 	"deps":      {},
 	"accept":    {},

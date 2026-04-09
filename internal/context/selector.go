@@ -21,16 +21,44 @@ const (
 
 type NeedPacket struct {
 	L0Packet
+	Query                string         `json:"query"`
 	Need                 string         `json:"need"`
 	SelectedContextClass string         `json:"selected_context_class"`
 	SufficientForNeed    bool           `json:"sufficient_for_need"`
+	FallbackUsed         bool           `json:"fallback_used"`
+	FullPlanRequired     bool           `json:"full_plan_required"`
 	EscalationReasons    []string       `json:"escalation_reasons,omitempty"`
 	IncludedFiles        []string       `json:"included_files,omitempty"`
+	IncludedFileRefs     []IncludedFile `json:"included_file_refs,omitempty"`
 	IncludedDeps         []string       `json:"included_deps,omitempty"`
+	IncludedDepRefs      []IncludedDep  `json:"included_dep_refs,omitempty"`
 	RemainingRisks       []string       `json:"remaining_risks,omitempty"`
 	NextUpgrade          string         `json:"next_upgrade,omitempty"`
 	Pins                 []PinExtract   `json:"pins,omitempty"`
 	Closure              []L2Dependency `json:"closure,omitempty"`
+	Stats                ContextStats   `json:"stats"`
+}
+
+type IncludedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+type IncludedDep struct {
+	TaskID string `json:"task_id"`
+	Reason string `json:"reason"`
+}
+
+type ContextStats struct {
+	IncludedLines           int      `json:"included_lines"`
+	IncludedFilesCount      int      `json:"included_files_count"`
+	IncludedDepsCount       int      `json:"included_deps_count"`
+	EstimatedTokenCount     int      `json:"estimated_token_count"`
+	EscalationPath          []string `json:"escalation_path"`
+	FullPlanLines           int      `json:"full_plan_lines,omitempty"`
+	FullPlanEstimatedTokens int      `json:"full_plan_estimated_tokens,omitempty"`
+	SavedLinesVsFullPlan    int      `json:"saved_lines_vs_full_plan,omitempty"`
+	SavedTokensVsFullPlan   int      `json:"saved_tokens_vs_full_plan,omitempty"`
 }
 
 func ParseNeed(raw string) (Need, error) {
@@ -52,9 +80,12 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 	base := buildL0Packet(plan, task, node)
 	packet := NeedPacket{
 		L0Packet:             base,
+		Query:                strings.TrimSpace(taskID),
 		Need:                 string(need),
 		SelectedContextClass: "task",
 		SufficientForNeed:    true,
+		FallbackUsed:         false,
+		FullPlanRequired:     false,
 	}
 
 	pins, fileReasons, pinErr := collectFileEvidence(plan, task, node, base)
@@ -74,6 +105,7 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 			packet.Pins = pins
 			packet.EscalationReasons = append([]string(nil), fileReasons...)
 			packet.IncludedFiles = pinTargetPaths(pins)
+			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
 			if hasDeps {
 				packet.NextUpgrade = "task+files+deps"
 			}
@@ -91,6 +123,7 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 			packet.Closure = l2.Closure
 			packet.EscalationReasons = []string{"declared task dependencies require graph reasoning"}
 			packet.IncludedDeps = append([]string(nil), task.Deps...)
+			packet.IncludedDepRefs = buildIncludedDepRefs(task.Deps, "declared task dependencies require graph reasoning")
 			if hasFileEvidence {
 				packet.NextUpgrade = "task+files+deps"
 			}
@@ -108,6 +141,7 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 			packet.Pins = pins
 			packet.EscalationReasons = append([]string(nil), fileReasons...)
 			packet.IncludedFiles = pinTargetPaths(pins)
+			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
 			packet.NextUpgrade = "task+files+deps"
 			packet.RemainingRisks = []string{"dependency semantics omitted from handoff packet; upgrade to task+files+deps when ordering or blocker analysis is required"}
 		case hasFileEvidence:
@@ -116,9 +150,12 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 			packet.Pins = pins
 			packet.EscalationReasons = append([]string(nil), fileReasons...)
 			packet.IncludedFiles = pinTargetPaths(pins)
+			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
 			packet.NextUpgrade = "task+files+deps"
 		case hasDeps:
 			packet.NextUpgrade = "task+deps"
+			packet.IncludedDeps = append([]string(nil), task.Deps...)
+			packet.IncludedDepRefs = buildIncludedDepRefs(task.Deps, "declared task dependencies require graph reasoning")
 			packet.RemainingRisks = []string{"dependency semantics omitted from handoff packet; upgrade to task+deps when ordering or blocker analysis is required"}
 		default:
 			packet.NextUpgrade = "task+files+deps"
@@ -139,6 +176,7 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 			packet.Pins = pins
 			packet.EscalationReasons = append([]string(nil), fileReasons...)
 			packet.IncludedFiles = pinTargetPaths(pins)
+			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
 		case hasDeps:
 			packet.NextUpgrade = "task+deps"
 		default:
@@ -146,7 +184,212 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 		}
 	}
 
+	packet.Stats = buildContextStats(plan, packet)
 	return packet, nil
+}
+
+func buildContextStats(plan ir.PlanIR, packet NeedPacket) ContextStats {
+	stats := ContextStats{
+		IncludedLines:       packetLineCount(packet),
+		IncludedFilesCount:  packetFileCount(packet),
+		IncludedDepsCount:   packetDepCount(packet),
+		EstimatedTokenCount: estimateTokens(packetTokenText(packet)),
+		EscalationPath:      escalationPath(packet.SelectedContextClass),
+	}
+
+	fullPlanText, fullPlanLines := readFullPlanStats(plan)
+	stats.FullPlanLines = fullPlanLines
+	stats.FullPlanEstimatedTokens = estimateTokens(fullPlanText)
+	if stats.FullPlanLines > 0 {
+		stats.SavedLinesVsFullPlan = stats.FullPlanLines - stats.IncludedLines
+	}
+	if stats.FullPlanEstimatedTokens > 0 {
+		stats.SavedTokensVsFullPlan = stats.FullPlanEstimatedTokens - stats.EstimatedTokenCount
+	}
+	return stats
+}
+
+func packetLineCount(packet NeedPacket) int {
+	total := lineRangeSize(packet.StartLine, packet.EndLine)
+	for _, pin := range packet.Pins {
+		total += lineRangeSize(pin.StartLine, pin.EndLine)
+	}
+	for _, dep := range packet.Closure {
+		total += lineRangeSize(dep.StartLine, dep.EndLine)
+	}
+	return total
+}
+
+func packetFileCount(packet NeedPacket) int {
+	paths := make(map[string]struct{})
+	if path := strings.TrimSpace(packet.SourcePath); path != "" {
+		paths[path] = struct{}{}
+	}
+	for _, pin := range packet.Pins {
+		if path := strings.TrimSpace(pin.TargetPath); path != "" {
+			paths[path] = struct{}{}
+		}
+	}
+	for _, dep := range packet.Closure {
+		if path := strings.TrimSpace(dep.SourcePath); path != "" {
+			paths[path] = struct{}{}
+		}
+	}
+	return len(paths)
+}
+
+func packetDepCount(packet NeedPacket) int {
+	if len(packet.Closure) > 0 {
+		return len(packet.Closure)
+	}
+	if len(packet.IncludedDeps) > 0 {
+		return len(packet.IncludedDeps)
+	}
+	return 0
+}
+
+func packetTokenText(packet NeedPacket) string {
+	parts := make([]string, 0, 1+len(packet.Pins)+len(packet.Closure))
+	if text := strings.TrimSpace(packet.SliceText); text != "" {
+		parts = append(parts, text)
+	}
+	for _, pin := range packet.Pins {
+		if text := strings.TrimSpace(pin.SliceText); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	for _, dep := range packet.Closure {
+		summary := strings.Join([]string{
+			strings.TrimSpace(dep.TaskID),
+			strings.TrimSpace(dep.Title),
+			strings.Join(dep.Deps, " "),
+			strings.Join(dep.Accept, " "),
+		}, "\n")
+		if text := strings.TrimSpace(summary); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func estimateTokens(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	runes := len([]rune(text))
+	return (runes + 3) / 4
+}
+
+func buildIncludedFileRefs(pins []PinExtract) []IncludedFile {
+	if len(pins) == 0 {
+		return nil
+	}
+	refs := make([]IncludedFile, 0, len(pins))
+	seen := make(map[string]struct{}, len(pins))
+	for _, pin := range pins {
+		path := strings.TrimSpace(pin.TargetPath)
+		if path == "" {
+			continue
+		}
+		reason := reasonForPin(pin)
+		key := path + "\x00" + reason
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		refs = append(refs, IncludedFile{
+			Path:   path,
+			Reason: reason,
+		})
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Path != refs[j].Path {
+			return refs[i].Path < refs[j].Path
+		}
+		return refs[i].Reason < refs[j].Reason
+	})
+	return refs
+}
+
+func reasonForPin(pin PinExtract) string {
+	switch strings.TrimSpace(pin.Key) {
+	case "inferred":
+		return "acceptance or scoped task text references repo files"
+	default:
+		return strings.TrimSpace(pin.Key)
+	}
+}
+
+func buildIncludedDepRefs(ids []string, reason string) []IncludedDep {
+	if len(ids) == 0 {
+		return nil
+	}
+	refs := make([]IncludedDep, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		taskID := strings.TrimSpace(id)
+		if taskID == "" {
+			continue
+		}
+		if _, exists := seen[taskID]; exists {
+			continue
+		}
+		seen[taskID] = struct{}{}
+		refs = append(refs, IncludedDep{
+			TaskID: taskID,
+			Reason: reason,
+		})
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		return refs[i].TaskID < refs[j].TaskID
+	})
+	return refs
+}
+
+func escalationPath(selected string) []string {
+	selected = strings.TrimSpace(selected)
+	if selected == "" || selected == "task" {
+		return []string{"task"}
+	}
+	return []string{"task", selected}
+}
+
+func lineRangeSize(start int, end int) int {
+	if start <= 0 || end < start {
+		return 0
+	}
+	return end - start + 1
+}
+
+func readFullPlanStats(plan ir.PlanIR) (string, int) {
+	path := strings.TrimSpace(plan.PlanPath)
+	if path == "" {
+		return "", maxSourceEndLine(plan)
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return "", maxSourceEndLine(plan)
+	}
+	text := string(payload)
+	return text, countTextLines(text)
+}
+
+func countTextLines(text string) int {
+	if text == "" {
+		return 0
+	}
+	return strings.Count(text, "\n") + 1
+}
+
+func maxSourceEndLine(plan ir.PlanIR) int {
+	maxEnd := 0
+	for _, node := range plan.Source.Nodes {
+		if node.EndLine > maxEnd {
+			maxEnd = node.EndLine
+		}
+	}
+	return maxEnd
 }
 
 func collectFileEvidence(plan ir.PlanIR, task ir.Task, node ir.SourceNode, base L0Packet) ([]PinExtract, []string, error) {

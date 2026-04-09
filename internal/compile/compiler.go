@@ -162,13 +162,15 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 			taskID = nodeRef
 		}
 		task := ir.Task{
-			ID:      taskID,
-			NodeRef: nodeRef,
-			Title:   attached.Node.Text,
-			Horizon: firstKnownValue(attached.KnownByKey, "horizon"),
-			Deps:    splitCSVValues(attached.KnownByKey["deps"]),
-			Accept:  valuesOf(attached.KnownByKey["accept"]),
+			ID:              taskID,
+			NodeRef:         nodeRef,
+			Title:           attached.Node.Text,
+			CanonicalStatus: canonicalTaskStatus(attached.KnownByKey["status"]),
+			Horizon:         firstKnownValue(attached.KnownByKey, "horizon"),
+			Deps:            splitCSVValues(attached.KnownByKey["deps"]),
+			Accept:          valuesOf(attached.KnownByKey["accept"]),
 		}
+		task.Sections = scopedTaskSections(idx, attachments.Nodes, compiled, parentByIndex, promotedHeadingByIndex)
 		task.Steps = descendantSteps(idx, attachments.Nodes, compiled, nodeRefs, parentByIndex, promotedHeadingByIndex)
 		task.EvidenceNodeRefs = descendantEvidenceNodeRefs(idx, attachments.Nodes, nodeRefs, parentByIndex, promotedHeadingByIndex)
 		task.SemanticFingerprint = build.TaskSemanticFingerprint(task)
@@ -176,9 +178,9 @@ func compilePlanWithLimits(planPath string, content []byte, parser *Parser, limi
 	}
 
 	return ir.PlanIR{
-		IRVersion:                       "v0.2",
+		IRVersion:                       "v0.3",
 		DeterminismPolicyVersion:        "v0.1",
-		SemanticDerivationPolicyVersion: "v0.1",
+		SemanticDerivationPolicyVersion: "v0.4",
 		PlanPath:                        filepath.ToSlash(planPath),
 		Source:                          ir.SourceIR{Nodes: sourceNodes},
 		Semantic: ir.SemanticIR{
@@ -206,7 +208,7 @@ func isPromotedHeadingTask(node Node, known map[string][]MetadataEntry) bool {
 	if node.Kind != NodeKindHeading {
 		return false
 	}
-	for _, key := range []string{"id", "horizon", "deps", "accept"} {
+	for _, key := range []string{"id", "status", "horizon", "deps", "accept"} {
 		if hasKnownMetadataValue(known[key]) {
 			return true
 		}
@@ -314,6 +316,93 @@ func descendantEvidenceNodeRefs(taskIdx int, attached []AttachedNodeMetadata, no
 	return refs
 }
 
+func scopedTaskSections(taskIdx int, attached []AttachedNodeMetadata, compiled []CompiledNode, parentByIndex []int, promotedHeadingByIndex map[int]struct{}) []ir.TaskSection {
+	if taskIdx < 0 || taskIdx >= len(attached) || taskIdx >= len(compiled) {
+		return nil
+	}
+
+	taskNode := attached[taskIdx].Node
+	lines := strings.Split(compiled[taskIdx].Slice.Text, "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+
+	skipLines := map[int]struct{}{
+		taskNode.Line: {},
+	}
+	for _, entries := range attached[taskIdx].KnownByKey {
+		for _, entry := range entries {
+			skipLines[entry.Line] = struct{}{}
+		}
+	}
+	for _, entry := range attached[taskIdx].Opaque {
+		skipLines[entry.Line] = struct{}{}
+	}
+	for idx, parentIdx := range parentByIndex {
+		if parentIdx != taskIdx {
+			continue
+		}
+		switch attached[idx].Node.Kind {
+		case NodeKindCheckbox:
+			for line := attached[idx].Node.StartLine; line <= attached[idx].Node.EndLine; line++ {
+				skipLines[line] = struct{}{}
+			}
+		case NodeKindHeading:
+			if _, promoted := promotedHeadingByIndex[idx]; promoted {
+				for line := attached[idx].Node.StartLine; line <= attached[idx].Node.EndLine; line++ {
+					skipLines[line] = struct{}{}
+				}
+			}
+		}
+	}
+
+	body := make([]string, 0, len(lines))
+	for offset, line := range lines {
+		absoluteLine := taskNode.StartLine + offset
+		if _, skip := skipLines[absoluteLine]; skip {
+			continue
+		}
+		body = append(body, line)
+	}
+	body = trimSectionBody(body)
+	if len(body) == 0 {
+		return nil
+	}
+	return []ir.TaskSection{{
+		Key:   "details",
+		Title: "Details",
+		Body:  body,
+	}}
+}
+
+func trimSectionBody(lines []string) []string {
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	trimmed := make([]string, 0, end-start)
+	lastBlank := false
+	for _, line := range lines[start:end] {
+		normalized := strings.TrimRight(line, " \t")
+		isBlank := strings.TrimSpace(normalized) == ""
+		if isBlank {
+			if lastBlank {
+				continue
+			}
+			lastBlank = true
+			trimmed = append(trimmed, "")
+			continue
+		}
+		lastBlank = false
+		trimmed = append(trimmed, normalized)
+	}
+	return trimmed
+}
+
 func extractNodes(compiled []CompiledNode) []Node {
 	nodes := make([]Node, 0, len(compiled))
 	for _, cn := range compiled {
@@ -352,6 +441,18 @@ func firstKnownValue(known map[string][]MetadataEntry, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(entries[len(entries)-1].Value)
+}
+
+func canonicalTaskStatus(entries []MetadataEntry) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		switch strings.ToLower(strings.TrimSpace(entries[i].Value)) {
+		case "done":
+			return "done"
+		case "open":
+			return "open"
+		}
+	}
+	return "open"
 }
 
 func normalizedLines(content string) []string {

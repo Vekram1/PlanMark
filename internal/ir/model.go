@@ -32,15 +32,23 @@ type SemanticIR struct {
 }
 
 type Task struct {
-	ID                  string     `json:"id"`
-	NodeRef             string     `json:"node_ref"`
-	Title               string     `json:"title"`
-	Horizon             string     `json:"horizon,omitempty"`
-	Deps                []string   `json:"deps,omitempty"`
-	Accept              []string   `json:"accept,omitempty"`
-	Steps               []TaskStep `json:"steps,omitempty"`
-	EvidenceNodeRefs    []string   `json:"evidence_node_refs,omitempty"`
-	SemanticFingerprint string     `json:"semantic_fingerprint,omitempty"`
+	ID                  string        `json:"id"`
+	NodeRef             string        `json:"node_ref"`
+	Title               string        `json:"title"`
+	CanonicalStatus     string        `json:"canonical_status"`
+	Horizon             string        `json:"horizon,omitempty"`
+	Deps                []string      `json:"deps,omitempty"`
+	Accept              []string      `json:"accept,omitempty"`
+	Sections            []TaskSection `json:"sections,omitempty"`
+	Steps               []TaskStep    `json:"steps,omitempty"`
+	EvidenceNodeRefs    []string      `json:"evidence_node_refs,omitempty"`
+	SemanticFingerprint string        `json:"semantic_fingerprint,omitempty"`
+}
+
+type TaskSection struct {
+	Key   string   `json:"key,omitempty"`
+	Title string   `json:"title,omitempty"`
+	Body  []string `json:"body,omitempty"`
 }
 
 type TaskStep struct {

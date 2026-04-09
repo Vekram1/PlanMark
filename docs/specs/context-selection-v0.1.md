@@ -7,8 +7,8 @@
 - Canonical source: `PLAN.md`
 - Related specs:
   - `docs/specs/planmark-v0.2.md`
-  - `docs/specs/semantic-derivation-v0.2.md`
-  - `docs/specs/ir-v0.2.md`
+  - `docs/specs/semantic-derivation-v0.4.md`
+  - `docs/specs/ir-v0.3.md`
   - `docs/specs/tracker-reconcile-v0.1.md`
 
 ## Purpose
@@ -285,10 +285,92 @@ Minimum fields for v0.1:
 - `escalation_reasons`
 - `included_files`
 - `included_deps`
+- `included_file_refs`
+- `included_dep_refs`
 - `remaining_risks`
 - `next_upgrade`
 
+Compatibility rule for v0.1:
+
+- `included_files` and `included_deps` may remain as simple string arrays for compatibility
+- richer additive fields should carry deterministic per-item reasons:
+  - `included_file_refs`: `{path, reason}`
+  - `included_dep_refs`: `{task_id, reason}`
+- for v0.1, file-ref reasons may be a stable coarse-grained file-evidence reason while the more specific trigger list remains in `escalation_reasons`
+- the richer fields should be preferred by new agent integrations once available
+
 This metadata exists for agent control flow, not for decorative human output.
+
+## Evaluation and Telemetry
+
+Need-based retrieval should be measurable. The system should let us answer whether the selector actually reduced context noise while preserving task accuracy.
+
+Minimum machine-readable packet stats for v0.1:
+
+- `included_lines`
+  - total lines represented by the selected packet
+  - count the root task slice plus any additional pinned file extracts and dependency summaries carried in the packet
+- `included_files_count`
+  - count distinct files represented by the packet, including the plan slice itself
+- `included_deps_count`
+  - count dependency summaries carried in the packet
+- `estimated_token_count`
+  - deterministic approximate token count for the packet payload
+- `escalation_path`
+  - the retrieval-class path actually taken, for example `task` or `task -> task+files`
+- `full_plan_lines`
+  - approximate full-plan baseline line count
+- `full_plan_estimated_tokens`
+  - approximate full-plan baseline token count
+- `saved_lines_vs_full_plan`
+  - `full_plan_lines - included_lines`
+- `saved_tokens_vs_full_plan`
+  - `full_plan_estimated_tokens - estimated_token_count`
+
+These stats are not a quality judgment on their own. They exist so agent orchestrators and evaluation harnesses can compare packets across repeated runs and against whole-plan retrieval.
+
+### Context Miss
+
+For v0.1, a context miss means the selected packet did not include a deterministic surface required for the requested need.
+
+Examples:
+
+- `edit` omitted file-backed evidence even though deterministic file triggers were present
+- `dependency-check` omitted dependency summaries even though declared dependencies required graph reasoning
+- `full-plan` fallback was required for a common-path `execute` request
+
+Repeated deterministic selection with the same plan bytes and same requested need must produce the same miss or non-miss result.
+
+### Over-Retrieval Noise
+
+For v0.1, over-retrieval noise means the selector added context that was not justified by deterministic policy triggers.
+
+Examples:
+
+- `execute` returning file-backed or dependency-backed expansion without an allowed miss condition
+- `handoff` always loading dependency closure just because `@deps` exists
+- packet size growing toward full-plan retrieval without measurable policy need
+
+The evaluation goal is not "smallest possible packet at all costs". The goal is "smallest sufficient deterministic packet".
+
+### Small Evaluation Protocol
+
+During migration away from legacy public levels, compare need-based retrieval against legacy level-based retrieval on repeated agent tasks:
+
+- `execute`
+  - should stay task-local on the common path
+  - should avoid full-plan fallback
+- `edit`
+  - should include file-backed context only when explicit or inferred file triggers justify it
+- `dependency-check`
+  - should include dependency summaries only when graph reasoning is the requested need
+
+A first-pass evaluation should answer:
+
+- Did the selector choose the same packet under repeated runs?
+- Did the packet satisfy the requested need without hidden fallback?
+- Did it avoid unrelated repo or plan expansion?
+- Did it reduce full-plan reads relative to the legacy workflow?
 
 ## Output Shape Expectations
 

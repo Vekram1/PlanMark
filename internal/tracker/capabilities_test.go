@@ -27,7 +27,7 @@ func TestBeadsAdapterCapabilities(t *testing.T) {
 	if !got.RuntimeOverlays.Status || !got.RuntimeOverlays.Assignee || !got.RuntimeOverlays.Priority {
 		t.Fatalf("expected safe runtime overlays for beads, got %#v", got)
 	}
-	if got.ProjectionSchema != ProjectionSchemaVersionV02 {
-		t.Fatalf("expected projection schema %q, got %#v", ProjectionSchemaVersionV02, got)
+	if got.ProjectionSchema != ProjectionSchemaVersionV03 {
+		t.Fatalf("expected projection schema %q, got %#v", ProjectionSchemaVersionV03, got)
 	}
 }

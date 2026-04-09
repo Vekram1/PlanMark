@@ -51,10 +51,11 @@ When operating in this project, you can use these ` + "`plan`" + ` commands:
 - ` + "`plan init [--dir <path>] [--plan <path>] [--state-dir <path>] [--config <path>] [--no-plan-template] [--no-config] [--format text|json]`" + `
 - ` + "`plan compile --plan <path> [--out <path>] [--state-dir <path>]`" + `
 - ` + "`plan doctor --plan <path> [--profile loose|build|exec] [--format text|rich|json]`" + `
-- ` + "`plan context <id> --plan <path> --level L0|L1|L2 [--format text|json]`" + `
+- ` + "`plan context <id> --plan <path> [--need execute|edit|dependency-check|handoff|auto] [--format text|json]`" + `  ← primary path
+- ` + "`plan context <id> --plan <path> --level L0|L1|L2 [--format text|json]`" + `  ← deprecated compatibility path
 - ` + "`plan open <id|node-ref> --plan <path> [--format text|json]`" + `
 - ` + "`plan explain <id> --plan <path> [--format text|rich|json]`" + `
-- ` + "`plan handoff <id|node-ref> --plan <path> [--format text|json]`" + `
+- ` + "`plan handoff <id|node-ref> --plan <path> [--format text|json]`" + `  ← bounded transfer packet built from need-based selection
 - ` + "`plan query --plan <path> [--horizon now|next|later] [--ready|--blocked] [--format text|json]`" + `
 - ` + "`plan sync [beads|github|linear] --plan <path> [--adapter beads|github|linear] [--profile default|compact|agentic|handoff] [--dry-run] [--format text|json]`" + `
 - ` + "`plan changes --plan <path> [--format text|json]`" + `

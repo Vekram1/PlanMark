@@ -1,7 +1,7 @@
 {
-  "ir_version": "v0.2",
+  "ir_version": "v0.3",
   "determinism_policy_version": "v0.1",
-  "semantic_derivation_policy_version": "v0.1",
+  "semantic_derivation_policy_version": "v0.4",
   "plan_path": "testdata/plans/mixed.md",
   "source": {
     "nodes": [
@@ -43,11 +43,12 @@
         "id": "fixture.mixed.ir",
         "node_ref": "testdata/plans/mixed.md|checkbox|04cadf227ee31c6de80024eb2e69b085ffca55b0fa993995fd06506b4045dda1#1",
         "title": "Build IR from mixed content",
+        "canonical_status": "open",
         "horizon": "now",
         "accept": [
           "text:verbatim slices preserve table and code fence"
         ],
-        "semantic_fingerprint": "b6fe561368207896b9372047b32fb3ac172b00d1e7ad8c3b316ae820abd4ed0f"
+        "semantic_fingerprint": "c6f42feff85576c2e3fd29c60a30d3d4a4b98dce2ed02b77b4599af2a6f1fd96"
       }
     ],
     "task_candidates": [

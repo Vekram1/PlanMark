@@ -206,6 +206,55 @@ func BuildL2(plan ir.PlanIR, taskID string) (L2Packet, error) {
 	}, nil
 }
 
+func BuildL2Cached(plan ir.PlanIR, taskID string, stateDir string) (L2Packet, bool, error) {
+	task, node, err := resolveTaskAndNode(plan, taskID)
+	if err != nil {
+		return L2Packet{}, false, err
+	}
+	packet, err := BuildL2(plan, taskID)
+	if err != nil {
+		return L2Packet{}, false, err
+	}
+
+	closureHashes := make([]string, 0, len(packet.Closure))
+	for _, dep := range packet.Closure {
+		closureHashes = append(closureHashes, strings.TrimSpace(dep.SliceHash))
+	}
+	key := cache.ContextPacketKey(cache.ContextKeyInput{
+		Level:                           "L2",
+		PlanPath:                        plan.PlanPath,
+		IRVersion:                       plan.IRVersion,
+		DeterminismPolicyVersion:        plan.DeterminismPolicyVersion,
+		SemanticDerivationPolicyVersion: plan.SemanticDerivationPolicyVersion,
+		TaskID:                          task.ID,
+		TaskNodeRef:                     task.NodeRef,
+		TaskSemanticFingerprint:         task.SemanticFingerprint,
+		NodeSliceHash:                   node.SliceHash,
+		DependencySliceHashes:           closureHashes,
+	})
+	if strings.TrimSpace(stateDir) != "" {
+		if payload, err := cache.ReadContextPacket(stateDir, key); err == nil {
+			var cached L2Packet
+			if err := json.Unmarshal(payload, &cached); err == nil {
+				return cached, true, nil
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return L2Packet{}, false, err
+		}
+	}
+
+	if strings.TrimSpace(stateDir) != "" {
+		payload, err := json.Marshal(packet)
+		if err != nil {
+			return L2Packet{}, false, fmt.Errorf("marshal L2 packet: %w", err)
+		}
+		if _, err := cache.WriteContextPacket(stateDir, key, payload); err != nil {
+			return L2Packet{}, false, err
+		}
+	}
+	return packet, false, nil
+}
+
 func BuildL0Cached(plan ir.PlanIR, taskID string, stateDir string) (L0Packet, bool, error) {
 	task, node, err := resolveTaskAndNode(plan, taskID)
 	if err != nil {

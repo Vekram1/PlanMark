@@ -6,8 +6,8 @@
 - Scope: deterministic robustness requirements for compile/context path fuzzing
 - Canonical dependencies:
   - `docs/specs/planmark-v0.2.md`
-  - `docs/specs/ir-v0.2.md`
-  - `docs/specs/semantic-derivation-v0.1.md`
+  - `docs/specs/ir-v0.3.md`
+  - `docs/specs/semantic-derivation-v0.4.md`
   - `docs/specs/change-detection-v0.1.md`
 
 ## Purpose

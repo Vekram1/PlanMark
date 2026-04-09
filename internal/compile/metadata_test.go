@@ -6,7 +6,7 @@ import (
 )
 
 func TestMetadataParse(t *testing.T) {
-	src := []byte("- [ ] Item\n  @id t1\n  @horizon now\n  @deps a,b\n  @accept cmd:go test ./...\n  @foo custom opaque\n")
+	src := []byte("- [ ] Item\n  @id t1\n  @status done\n  @horizon now\n  @deps a,b\n  @accept cmd:go test ./...\n  @foo custom opaque\n")
 
 	parsed, err := ParseMetadata(src)
 	if err != nil {
@@ -15,6 +15,9 @@ func TestMetadataParse(t *testing.T) {
 
 	if len(parsed.KnownByKey["id"]) != 1 || parsed.KnownByKey["id"][0].Value != "t1" {
 		t.Fatalf("expected known id metadata entry, got %#v", parsed.KnownByKey["id"])
+	}
+	if len(parsed.KnownByKey["status"]) != 1 || parsed.KnownByKey["status"][0].Value != "done" {
+		t.Fatalf("expected known status metadata entry, got %#v", parsed.KnownByKey["status"])
 	}
 	if len(parsed.KnownByKey["horizon"]) != 1 || parsed.KnownByKey["horizon"][0].Value != "now" {
 		t.Fatalf("expected known horizon metadata entry, got %#v", parsed.KnownByKey["horizon"])
@@ -26,7 +29,7 @@ func TestMetadataParse(t *testing.T) {
 		t.Fatalf("expected known accept metadata entry, got %#v", parsed.KnownByKey["accept"])
 	}
 
-	wantOpaque := []MetadataEntry{{Key: "foo", Value: "custom opaque", Line: 6, Indent: 2}}
+	wantOpaque := []MetadataEntry{{Key: "foo", Value: "custom opaque", Line: 7, Indent: 2}}
 	if !reflect.DeepEqual(parsed.Opaque, wantOpaque) {
 		t.Fatalf("opaque metadata mismatch\nwant=%#v\ngot=%#v", wantOpaque, parsed.Opaque)
 	}

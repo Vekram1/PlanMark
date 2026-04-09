@@ -258,8 +258,47 @@ func TestCompilePromotesHeadingTaskWithExplicitTaskMetadata(t *testing.T) {
 	if task.Title != "Add migration" {
 		t.Fatalf("expected heading task title Add migration, got %#v", task)
 	}
+	if task.CanonicalStatus != "open" {
+		t.Fatalf("expected default canonical task status open, got %#v", task.CanonicalStatus)
+	}
 	if task.NodeRef == "" {
 		t.Fatalf("expected heading task node_ref")
+	}
+	if len(task.Sections) != 1 {
+		t.Fatalf("expected heading task details section, got %#v", task.Sections)
+	}
+	if task.Sections[0].Title != "Details" {
+		t.Fatalf("expected details section title, got %#v", task.Sections)
+	}
+	if len(task.Sections[0].Body) != 1 || task.Sections[0].Body[0] != "We need additive rollout first." {
+		t.Fatalf("expected scoped prose in details section, got %#v", task.Sections)
+	}
+}
+
+func TestCompileDerivesCanonicalTaskStatus(t *testing.T) {
+	src := strings.Join([]string{
+		"## Ship release",
+		"@id release.ship",
+		"@status done",
+		"@accept cmd:go test ./...",
+	}, "\n")
+
+	compiled, err := CompilePlan("task-status.md", []byte(src), NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile task with status: %v", err)
+	}
+	if len(compiled.Semantic.Tasks) != 1 {
+		t.Fatalf("expected one semantic task, got %#v", compiled.Semantic.Tasks)
+	}
+	task := compiled.Semantic.Tasks[0]
+	if task.CanonicalStatus != "done" {
+		t.Fatalf("expected canonical task status done, got %#v", task.CanonicalStatus)
+	}
+	if compiled.SemanticDerivationPolicyVersion != "v0.4" {
+		t.Fatalf("expected semantic derivation policy v0.4, got %#v", compiled.SemanticDerivationPolicyVersion)
+	}
+	if compiled.IRVersion != "v0.3" {
+		t.Fatalf("expected IR version v0.3, got %#v", compiled.IRVersion)
 	}
 }
 

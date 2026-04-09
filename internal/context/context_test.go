@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -662,6 +663,9 @@ func TestSelectByNeedEditUsesAcceptanceRepoFileReference(t *testing.T) {
 	if len(packet.IncludedFiles) != 1 || packet.IncludedFiles[0] != "docs/specs/context-selection-v0.1.md" {
 		t.Fatalf("expected inferred included file, got %#v", packet.IncludedFiles)
 	}
+	if len(packet.IncludedFileRefs) != 1 || packet.IncludedFileRefs[0].Path != "docs/specs/context-selection-v0.1.md" || packet.IncludedFileRefs[0].Reason != "acceptance or scoped task text references repo files" {
+		t.Fatalf("expected structured included file refs, got %#v", packet.IncludedFileRefs)
+	}
 	if len(packet.Pins) != 1 || packet.Pins[0].Key != "inferred" {
 		t.Fatalf("expected inferred file pin, got %#v", packet.Pins)
 	}
@@ -715,6 +719,9 @@ func TestSelectByNeedAutoUsesScopedTaskRepoFileReference(t *testing.T) {
 	}
 	if got := packet.IncludedFiles; len(got) != 2 || got[0] != "docs/specs/context-selection-v0.1.md" || got[1] != "internal/context/selector.go" {
 		t.Fatalf("expected sorted inferred file list, got %#v", got)
+	}
+	if got := packet.IncludedFileRefs; len(got) != 2 || got[0].Path != "docs/specs/context-selection-v0.1.md" || got[0].Reason != "acceptance or scoped task text references repo files" || got[1].Path != "internal/context/selector.go" || got[1].Reason != "acceptance or scoped task text references repo files" {
+		t.Fatalf("expected structured included file refs, got %#v", got)
 	}
 	if len(packet.EscalationReasons) != 2 {
 		t.Fatalf("expected two escalation reasons, got %#v", packet.EscalationReasons)
@@ -771,6 +778,9 @@ func TestSelectByNeedAutoIgnoresRepoPathsInsideFencedSectionExamples(t *testing.
 	if got := packet.IncludedFiles; len(got) != 1 || got[0] != "docs/specs/context-selection-v0.1.md" {
 		t.Fatalf("expected fenced path references to be ignored, got %#v", got)
 	}
+	if got := packet.IncludedFileRefs; len(got) != 1 || got[0].Path != "docs/specs/context-selection-v0.1.md" || got[0].Reason != "acceptance or scoped task text references repo files" {
+		t.Fatalf("expected structured included file refs to ignore fenced paths, got %#v", got)
+	}
 	if len(packet.EscalationReasons) != 1 || packet.EscalationReasons[0] != "acceptance references repo files" {
 		t.Fatalf("unexpected escalation reasons: %#v", packet.EscalationReasons)
 	}
@@ -809,6 +819,9 @@ func TestSelectByNeedDependencyCheckIncludesClosureForDeclaredDeps(t *testing.T)
 	}
 	if len(packet.Closure) != 1 || packet.Closure[0].TaskID != "task.dep" {
 		t.Fatalf("expected dependency closure, got %#v", packet.Closure)
+	}
+	if len(packet.IncludedDepRefs) != 1 || packet.IncludedDepRefs[0].TaskID != "task.dep" || packet.IncludedDepRefs[0].Reason != "declared task dependencies require graph reasoning" {
+		t.Fatalf("expected structured included dep refs, got %#v", packet.IncludedDepRefs)
 	}
 	if len(packet.EscalationReasons) != 1 || packet.EscalationReasons[0] != "declared task dependencies require graph reasoning" {
 		t.Fatalf("unexpected dependency escalation reasons: %#v", packet.EscalationReasons)
@@ -851,6 +864,12 @@ func TestSelectByNeedHandoffDoesNotAutoExpandDepsOnlyTask(t *testing.T) {
 	}
 	if packet.NextUpgrade != "task+deps" {
 		t.Fatalf("expected next upgrade task+deps, got %#v", packet)
+	}
+	if len(packet.IncludedDeps) != 1 || packet.IncludedDeps[0] != "task.dep" {
+		t.Fatalf("expected compatibility included deps for handoff deps-only task, got %#v", packet.IncludedDeps)
+	}
+	if len(packet.IncludedDepRefs) != 1 || packet.IncludedDepRefs[0].TaskID != "task.dep" || packet.IncludedDepRefs[0].Reason != "declared task dependencies require graph reasoning" {
+		t.Fatalf("expected structured dep refs for handoff deps-only task, got %#v", packet.IncludedDepRefs)
 	}
 	if len(packet.RemainingRisks) != 1 || !strings.Contains(packet.RemainingRisks[0], "dependency semantics omitted") {
 		t.Fatalf("expected dependency omission risk, got %#v", packet.RemainingRisks)
@@ -943,5 +962,159 @@ func TestBuildL0CachedMissThenHit(t *testing.T) {
 	}
 	if packetA.SliceHash != packetB.SliceHash {
 		t.Fatalf("expected cached packet to match initial packet slice hash")
+	}
+}
+
+func TestBuildL2CachedMissThenHit(t *testing.T) {
+	tmp := t.TempDir()
+	stateDir := filepath.Join(tmp, ".planmark")
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Root task",
+		"  @id fixture.task.root",
+		"  @horizon later",
+		"  @deps fixture.task.b,fixture.task.c",
+		"",
+		"- [ ] Dependency B",
+		"  @id fixture.task.b",
+		"  @horizon later",
+		"  @deps fixture.task.c",
+		"",
+		"- [ ] Dependency C",
+		"  @id fixture.task.c",
+		"  @horizon later",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packetA, hitA, err := BuildL2Cached(compiled, "fixture.task.root", stateDir)
+	if err != nil {
+		t.Fatalf("build L2 cached (first): %v", err)
+	}
+	if hitA {
+		t.Fatalf("expected first cached build to miss")
+	}
+	if len(packetA.Closure) != 2 {
+		t.Fatalf("expected L2 closure on first build, got %#v", packetA.Closure)
+	}
+
+	packetB, hitB, err := BuildL2Cached(compiled, "fixture.task.root", stateDir)
+	if err != nil {
+		t.Fatalf("build L2 cached (second): %v", err)
+	}
+	if !hitB {
+		t.Fatalf("expected second cached build to hit")
+	}
+	if len(packetB.Closure) != 2 {
+		t.Fatalf("expected L2 closure on cached build, got %#v", packetB.Closure)
+	}
+	if packetA.Closure[0].TaskID != packetB.Closure[0].TaskID || packetA.Closure[1].SliceHash != packetB.Closure[1].SliceHash {
+		t.Fatalf("expected cached L2 packet to preserve deterministic closure")
+	}
+}
+
+func TestNeedStatsDeterministicAcrossRepeatedSelection(t *testing.T) {
+	tmp := t.TempDir()
+	docPath := filepath.Join(tmp, "docs", "specs", "context-selection-v0.1.md")
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		t.Fatalf("mkdir doc path: %v", err)
+	}
+	if err := os.WriteFile(docPath, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Root task",
+		"@id fixture.task.root",
+		"@horizon now",
+		"@accept cmd:test -f docs/specs/context-selection-v0.1.md",
+		"@deps fixture.task.dep",
+		"",
+		"## Dep task",
+		"@id fixture.task.dep",
+		"@horizon next",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packetA, err := SelectByNeed(compiled, "fixture.task.root", NeedAuto)
+	if err != nil {
+		t.Fatalf("select by need (first): %v", err)
+	}
+	packetB, err := SelectByNeed(compiled, "fixture.task.root", NeedAuto)
+	if err != nil {
+		t.Fatalf("select by need (second): %v", err)
+	}
+
+	if !reflect.DeepEqual(packetA.Stats, packetB.Stats) {
+		t.Fatalf("expected repeated selection stats to be deterministic:\nfirst=%#v\nsecond=%#v", packetA.Stats, packetB.Stats)
+	}
+	if packetA.SelectedContextClass != "task+files" {
+		t.Fatalf("expected task+files packet, got %#v", packetA.SelectedContextClass)
+	}
+	if !reflect.DeepEqual(packetA.IncludedFileRefs, packetB.IncludedFileRefs) {
+		t.Fatalf("expected repeated included file refs to match:\nfirst=%#v\nsecond=%#v", packetA.IncludedFileRefs, packetB.IncludedFileRefs)
+	}
+}
+
+func TestNeedStatsRemainInternallyConsistentWhenPacketExceedsFullPlanBaseline(t *testing.T) {
+	tmp := t.TempDir()
+	docPath := filepath.Join(tmp, "docs", "specs", "context-selection-v0.1.md")
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		t.Fatalf("mkdir doc path: %v", err)
+	}
+	specBody := strings.Repeat("# spec details\n", 80)
+	if err := os.WriteFile(docPath, []byte(specBody), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Eval task",
+		"@id fixture.task.eval",
+		"@horizon next",
+		"@accept cmd:test -f docs/specs/context-selection-v0.1.md",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "fixture.task.eval", NeedAuto)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+
+	if packet.Stats.FullPlanLines != countTextLines(planBody) {
+		t.Fatalf("expected full plan line baseline %d, got %#v", countTextLines(planBody), packet.Stats.FullPlanLines)
+	}
+	if packet.Stats.IncludedFilesCount != 2 {
+		t.Fatalf("expected plan slice plus pinned spec file, got %#v", packet.Stats.IncludedFilesCount)
+	}
+	if packet.Stats.SavedLinesVsFullPlan != packet.Stats.FullPlanLines-packet.Stats.IncludedLines {
+		t.Fatalf("expected saved lines math to stay internally consistent, got %#v", packet.Stats)
+	}
+	if packet.Stats.SavedTokensVsFullPlan != packet.Stats.FullPlanEstimatedTokens-packet.Stats.EstimatedTokenCount {
+		t.Fatalf("expected saved token math to stay internally consistent, got %#v", packet.Stats)
+	}
+	if packet.Stats.SavedLinesVsFullPlan >= 0 {
+		t.Fatalf("expected oversized file-backed packet to show negative saved lines, got %#v", packet.Stats)
 	}
 }
