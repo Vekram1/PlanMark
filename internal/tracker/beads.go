@@ -25,6 +25,7 @@ const BeadsRenderProfile = RenderProfileDefault
 
 var ErrTransientSync = errors.New("transient tracker sync error")
 var ErrRateLimitedSync = errors.New("tracker rate limited")
+var beadsIssueIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*-[a-z0-9]+$`)
 
 type SourceRange struct {
 	Path      string `json:"path"`
@@ -499,16 +500,8 @@ func (a *BeadsAdapter) createIssueWithExternalRef(externalRef string, title stri
 	if priority > 0 {
 		args = append(args, "--priority", fmt.Sprintf("%d", priority))
 	}
-	createDescription := description
-	if strings.TrimSpace(acceptance) != "" {
-		if strings.TrimSpace(createDescription) != "" {
-			createDescription += "\n\n## Acceptance\n" + acceptance
-		} else {
-			createDescription = "## Acceptance\n" + acceptance
-		}
-	}
-	if strings.TrimSpace(createDescription) != "" {
-		args = append(args, "--description", createDescription)
+	if strings.TrimSpace(description) != "" {
+		args = append(args, "--description", description)
 	}
 	output, err := a.runBr(args...)
 	if err != nil {
@@ -753,7 +746,7 @@ func (a *BeadsAdapter) deleteTaskState(id string) {
 
 func isLikelyBeadsIssueID(id string) bool {
 	trimmed := strings.TrimSpace(id)
-	return strings.HasPrefix(trimmed, "bead-") || strings.HasPrefix(trimmed, "bd-")
+	return beadsIssueIDPattern.MatchString(trimmed)
 }
 
 func isBeadsIssueNotFound(err error) bool {

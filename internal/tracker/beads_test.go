@@ -685,6 +685,13 @@ func TestBeadsPushCreatesRealIssueAndStoresRemoteID(t *testing.T) {
 		if !slices.Contains(args, "--description") {
 			t.Fatalf("expected create to include description, got %#v", args)
 		}
+		descriptionIndex := slices.Index(args, "--description")
+		if descriptionIndex < 0 || descriptionIndex+1 >= len(args) {
+			t.Fatalf("expected create description argument, got %#v", args)
+		}
+		if strings.Count(args[descriptionIndex+1], "## Acceptance") != 1 {
+			t.Fatalf("expected create description to render acceptance once, got %#v", args)
+		}
 		if !slices.Contains(args, "--priority") || !slices.Contains(args, "1") {
 			t.Fatalf("expected create to include mapped priority 1, got %#v", args)
 		}
@@ -1039,6 +1046,68 @@ func TestBeadsAcceptsBDIssueIDsFromBr(t *testing.T) {
 	}
 	if second.RemoteID != "bd-13r" {
 		t.Fatalf("expected second remote id bd-13r, got %#v", second)
+	}
+	if createCalls != 1 {
+		t.Fatalf("expected exactly one create call, got %d", createCalls)
+	}
+}
+
+func TestBeadsAcceptsCustomPrefixIssueIDsFromBr(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	createCalls := 0
+	runBrCommand = func(args ...string) ([]byte, error) {
+		if len(args) == 0 {
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		switch args[0] {
+		case "list":
+			if createCalls == 0 {
+				return []byte(`[]`), nil
+			}
+			return []byte(`[{"id":"smoke-swv","title":"Custom prefix issue","external_ref":"smoke.custom.prefix"}]`), nil
+		case "show":
+			return []byte(`[{"id":"smoke-swv","title":"Custom prefix issue","status":"open","external_ref":"smoke.custom.prefix"}]`), nil
+		case "create":
+			createCalls++
+			return []byte(`{"id":"smoke-swv","title":"Custom prefix issue"}`), nil
+		case "update":
+			return []byte(`[{"id":"smoke-swv","title":"Custom prefix issue","external_ref":"smoke.custom.prefix"}]`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
+	adapter := NewBeadsAdapter()
+	task := TaskProjection{
+		ID:    "smoke.custom.prefix",
+		Title: "Custom prefix issue",
+		Provenance: TaskProvenance{
+			NodeRef:    "./PLAN.md|checkbox|custom#1",
+			Path:       "./PLAN.md",
+			StartLine:  10,
+			EndLine:    14,
+			SourceHash: strings.Repeat("d", 64),
+			CompileID:  strings.Repeat("e", 64),
+		},
+	}
+
+	first, err := adapter.PushTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("first push task: %v", err)
+	}
+	if first.RemoteID != "smoke-swv" {
+		t.Fatalf("expected first remote id smoke-swv, got %#v", first)
+	}
+
+	second, err := adapter.PushTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("second push task: %v", err)
+	}
+	if second.RemoteID != "smoke-swv" {
+		t.Fatalf("expected second remote id smoke-swv, got %#v", second)
 	}
 	if createCalls != 1 {
 		t.Fatalf("expected exactly one create call, got %d", createCalls)
