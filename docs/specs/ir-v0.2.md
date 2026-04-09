@@ -6,7 +6,7 @@
 - Scope: Canonical Source IR + Semantic IR structures and determinism requirements
 - Related policies:
   - `determinism/v0.1`
-  - `semantic_derivation/v0.1`
+  - `semantic_derivation/v0.2`
 
 ## IR Model
 
