@@ -124,6 +124,36 @@ func TestL0PacketIncludesStepsAndEvidence(t *testing.T) {
 	}
 }
 
+func TestL0PacketIncludesSemanticSections(t *testing.T) {
+	content := strings.Join([]string{
+		"## Add migration",
+		"@id api.migrate",
+		"@horizon now",
+		"@accept cmd:go test ./...",
+		"",
+		"We need additive rollout first.",
+	}, "\n")
+
+	compiled, err := compile.CompilePlan("PLAN.md", []byte(content), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := BuildL0(compiled, "api.migrate")
+	if err != nil {
+		t.Fatalf("build L0 packet: %v", err)
+	}
+	if len(packet.Sections) != 1 {
+		t.Fatalf("expected one semantic section, got %#v", packet.Sections)
+	}
+	if packet.Sections[0].Title != "Details" {
+		t.Fatalf("expected details section title, got %#v", packet.Sections)
+	}
+	if len(packet.Sections[0].Body) != 1 || packet.Sections[0].Body[0] != "We need additive rollout first." {
+		t.Fatalf("expected section body in L0 packet, got %#v", packet.Sections)
+	}
+}
+
 func TestL0PacketRefusesNowTaskMissingAccept(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
@@ -565,6 +595,315 @@ func TestL1PinRejectsReversedRange(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid range") {
 		t.Fatalf("expected invalid range error, got %v", err)
+	}
+}
+
+func TestSelectByNeedEditRejectsBrokenTouches(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"  @touches internal/compile/parser.go:9-3",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	_, err = SelectByNeed(compiled, "fixture.task.now", NeedEdit)
+	if err == nil {
+		t.Fatalf("expected need-based selector to reject broken touches metadata")
+	}
+	if !strings.Contains(err.Error(), "invalid range") {
+		t.Fatalf("expected invalid range error, got %v", err)
+	}
+}
+
+func TestSelectByNeedEditUsesAcceptanceRepoFileReference(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "docs", "specs", "context-selection-v0.1.md")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Task now",
+		"  @id fixture.task.now",
+		"  @horizon now",
+		"  @accept cmd:test -f docs/specs/context-selection-v0.1.md",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "fixture.task.now", NeedEdit)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+	if packet.SelectedContextClass != "task+files" {
+		t.Fatalf("expected task+files, got %#v", packet)
+	}
+	if len(packet.IncludedFiles) != 1 || packet.IncludedFiles[0] != "docs/specs/context-selection-v0.1.md" {
+		t.Fatalf("expected inferred included file, got %#v", packet.IncludedFiles)
+	}
+	if len(packet.Pins) != 1 || packet.Pins[0].Key != "inferred" {
+		t.Fatalf("expected inferred file pin, got %#v", packet.Pins)
+	}
+	if len(packet.EscalationReasons) != 1 || packet.EscalationReasons[0] != "acceptance references repo files" {
+		t.Fatalf("expected acceptance-based escalation reason, got %#v", packet.EscalationReasons)
+	}
+}
+
+func TestSelectByNeedAutoUsesScopedTaskRepoFileReference(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "internal", "context", "selector.go")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("package context\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	docPath := filepath.Join(tmp, "docs", "specs", "context-selection-v0.1.md")
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		t.Fatalf("mkdir doc path: %v", err)
+	}
+	if err := os.WriteFile(docPath, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Implement selector",
+		"@id pm.context.impl",
+		"@horizon now",
+		"@accept cmd:test -f docs/specs/context-selection-v0.1.md",
+		"",
+		"Update internal/context/selector.go to add deterministic path-sensitive selection.",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "pm.context.impl", NeedAuto)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+	if packet.SelectedContextClass != "task+files" {
+		t.Fatalf("expected task+files, got %#v", packet)
+	}
+	if got := packet.IncludedFiles; len(got) != 2 || got[0] != "docs/specs/context-selection-v0.1.md" || got[1] != "internal/context/selector.go" {
+		t.Fatalf("expected sorted inferred file list, got %#v", got)
+	}
+	if len(packet.EscalationReasons) != 2 {
+		t.Fatalf("expected two escalation reasons, got %#v", packet.EscalationReasons)
+	}
+	if packet.EscalationReasons[0] != "acceptance references repo files" || packet.EscalationReasons[1] != "scoped task text references repo files" {
+		t.Fatalf("unexpected escalation reasons: %#v", packet.EscalationReasons)
+	}
+}
+
+func TestSelectByNeedAutoIgnoresRepoPathsInsideFencedSectionExamples(t *testing.T) {
+	tmp := t.TempDir()
+	docPath := filepath.Join(tmp, "docs", "specs", "context-selection-v0.1.md")
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		t.Fatalf("mkdir doc path: %v", err)
+	}
+	if err := os.WriteFile(docPath, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatalf("write doc file: %v", err)
+	}
+
+	targetPath := filepath.Join(tmp, "internal", "context", "selector.go")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("package context\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"## Implement selector",
+		"@id pm.context.impl",
+		"@horizon now",
+		"@accept cmd:test -f docs/specs/context-selection-v0.1.md",
+		"",
+		"Example only:",
+		"",
+		"```go",
+		"// do not infer internal/context/selector.go from fenced examples",
+		"```",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "pm.context.impl", NeedAuto)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+	if got := packet.IncludedFiles; len(got) != 1 || got[0] != "docs/specs/context-selection-v0.1.md" {
+		t.Fatalf("expected fenced path references to be ignored, got %#v", got)
+	}
+	if len(packet.EscalationReasons) != 1 || packet.EscalationReasons[0] != "acceptance references repo files" {
+		t.Fatalf("unexpected escalation reasons: %#v", packet.EscalationReasons)
+	}
+}
+
+func TestSelectByNeedDependencyCheckIncludesClosureForDeclaredDeps(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	content := strings.Join([]string{
+		"- [ ] Root task",
+		"  @id task.root",
+		"  @horizon now",
+		"  @deps task.dep",
+		"  @accept cmd:go test ./...",
+		"",
+		"- [ ] Dependency task",
+		"  @id task.dep",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(content), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "task.root", NeedDependencyCheck)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+	if packet.SelectedContextClass != "task+deps" {
+		t.Fatalf("expected task+deps, got %#v", packet)
+	}
+	if len(packet.Closure) != 1 || packet.Closure[0].TaskID != "task.dep" {
+		t.Fatalf("expected dependency closure, got %#v", packet.Closure)
+	}
+	if len(packet.EscalationReasons) != 1 || packet.EscalationReasons[0] != "declared task dependencies require graph reasoning" {
+		t.Fatalf("unexpected dependency escalation reasons: %#v", packet.EscalationReasons)
+	}
+}
+
+func TestSelectByNeedHandoffDoesNotAutoExpandDepsOnlyTask(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	content := strings.Join([]string{
+		"- [ ] Root task",
+		"  @id task.root",
+		"  @horizon now",
+		"  @deps task.dep",
+		"  @accept cmd:go test ./...",
+		"",
+		"- [ ] Dependency task",
+		"  @id task.dep",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(content), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "task.root", NeedHandoff)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+	if packet.SelectedContextClass != "task" {
+		t.Fatalf("expected bounded handoff task packet, got %#v", packet)
+	}
+	if len(packet.Closure) != 0 {
+		t.Fatalf("expected no dependency closure in default handoff packet, got %#v", packet.Closure)
+	}
+	if packet.NextUpgrade != "task+deps" {
+		t.Fatalf("expected next upgrade task+deps, got %#v", packet)
+	}
+	if len(packet.RemainingRisks) != 1 || !strings.Contains(packet.RemainingRisks[0], "dependency semantics omitted") {
+		t.Fatalf("expected dependency omission risk, got %#v", packet.RemainingRisks)
+	}
+}
+
+func TestSelectByNeedHandoffFilesAndDepsStaysFileBounded(t *testing.T) {
+	tmp := t.TempDir()
+	targetPath := filepath.Join(tmp, "docs", "specs", "context-selection-v0.1.md")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target path: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("# spec\n"), 0o644); err != nil {
+		t.Fatalf("write target file: %v", err)
+	}
+
+	planPath := filepath.Join(tmp, "PLAN.md")
+	planBody := strings.Join([]string{
+		"- [ ] Root task",
+		"  @id task.root",
+		"  @horizon now",
+		"  @deps task.dep",
+		"  @accept cmd:test -f docs/specs/context-selection-v0.1.md",
+		"",
+		"- [ ] Dependency task",
+		"  @id task.dep",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(planBody), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "task.root", NeedHandoff)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+	if packet.SelectedContextClass != "task+files" {
+		t.Fatalf("expected task+files handoff packet, got %#v", packet)
+	}
+	if len(packet.Closure) != 0 {
+		t.Fatalf("expected no dependency closure in default handoff packet, got %#v", packet.Closure)
+	}
+	if packet.NextUpgrade != "task+files+deps" {
+		t.Fatalf("expected next upgrade task+files+deps, got %#v", packet)
+	}
+	if len(packet.RemainingRisks) != 1 || !strings.Contains(packet.RemainingRisks[0], "dependency semantics omitted") {
+		t.Fatalf("expected dependency omission risk, got %#v", packet.RemainingRisks)
 	}
 }
 

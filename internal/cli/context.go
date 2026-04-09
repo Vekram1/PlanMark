@@ -19,11 +19,11 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 	filteredArgs := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if strings.HasPrefix(arg, "--plan=") || strings.HasPrefix(arg, "--level=") || strings.HasPrefix(arg, "--format=") {
+		if strings.HasPrefix(arg, "--plan=") || strings.HasPrefix(arg, "--level=") || strings.HasPrefix(arg, "--need=") || strings.HasPrefix(arg, "--format=") {
 			filteredArgs = append(filteredArgs, arg)
 			continue
 		}
-		if arg == "--plan" || arg == "--level" || arg == "--format" {
+		if arg == "--plan" || arg == "--level" || arg == "--need" || arg == "--format" {
 			filteredArgs = append(filteredArgs, arg)
 			if i+1 < len(args) {
 				i++
@@ -46,6 +46,7 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	level := fs.String("level", "L0", "context level: L0|L1|L2")
+	need := fs.String("need", "", "context need: execute|edit|dependency-check|handoff|auto")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(filteredArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -57,7 +58,7 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	remaining := fs.Args()
 	if len(remaining) > 1 {
-		fmt.Fprintln(stderr, "usage: plan context <id> --plan <path> [--level L0|L1|L2] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan context <id> --plan <path> [--need execute|edit|dependency-check|handoff|auto | --level L0|L1|L2] [--format text|json]")
 		return protocol.ExitUsageError
 	}
 	if len(remaining) == 1 {
@@ -68,7 +69,7 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 		positionalID = remaining[0]
 	}
 	if strings.TrimSpace(positionalID) == "" {
-		fmt.Fprintln(stderr, "usage: plan context <id> --plan <path> [--level L0|L1|L2] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan context <id> --plan <path> [--need execute|edit|dependency-check|handoff|auto | --level L0|L1|L2] [--format text|json]")
 		return protocol.ExitUsageError
 	}
 	if *planPath == "" {
@@ -79,6 +80,10 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 	taskID := strings.TrimSpace(positionalID)
 	if taskID == "" {
 		fmt.Fprintln(stderr, "missing task id")
+		return protocol.ExitUsageError
+	}
+	if strings.TrimSpace(*need) != "" && strings.TrimSpace(*level) != "" && !strings.EqualFold(strings.TrimSpace(*level), "L0") {
+		fmt.Fprintln(stderr, "--need and --level may not be combined")
 		return protocol.ExitUsageError
 	}
 
@@ -93,7 +98,76 @@ func runContext(args []string, stdout io.Writer, stderr io.Writer) int {
 		return protocol.ExitInternalError
 	}
 
+	needNormalized := strings.TrimSpace(*need)
 	levelNormalized := strings.ToUpper(strings.TrimSpace(*level))
+
+	if needNormalized != "" {
+		parsedNeed, err := contextpkg.ParseNeed(needNormalized)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return protocol.ExitUsageError
+		}
+		switch strings.ToLower(strings.TrimSpace(*format)) {
+		case "json":
+			packet, err := contextpkg.SelectByNeed(compiled, taskID, parsedNeed)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			payload := protocol.Envelope[contextpkg.NeedPacket]{
+				SchemaVersion: protocol.SchemaVersionV01,
+				ToolVersion:   CLIVersion,
+				Command:       "context",
+				Status:        "ok",
+				Data:          packet,
+			}
+			enc := json.NewEncoder(stdout)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(payload); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return protocol.ExitInternalError
+			}
+		case "text":
+			packet, err := contextpkg.SelectByNeed(compiled, taskID, parsedNeed)
+			if err != nil {
+				if errors.Is(err, contextpkg.ErrTaskNotReady) || errors.Is(err, contextpkg.ErrTaskNotFound) {
+					fmt.Fprintln(stderr, err.Error())
+					return protocol.ExitValidationFailed
+				}
+				fmt.Fprintf(stderr, "build context: %v\n", err)
+				return protocol.ExitInternalError
+			}
+			fmt.Fprintf(stdout, "need: %s\n", packet.Need)
+			fmt.Fprintf(stdout, "selected_context_class: %s\n", packet.SelectedContextClass)
+			fmt.Fprintf(stdout, "sufficient_for_need: %t\n", packet.SufficientForNeed)
+			fmt.Fprintf(stdout, "level: %s\n", packet.Level)
+			fmt.Fprintf(stdout, "task_id: %s\n", packet.TaskID)
+			fmt.Fprintf(stdout, "title: %s\n", packet.Title)
+			fmt.Fprintf(stdout, "horizon: %s\n", packet.Horizon)
+			fmt.Fprintf(stdout, "sections: %d\n", len(packet.Sections))
+			fmt.Fprintf(stdout, "steps: %d\n", len(packet.Steps))
+			fmt.Fprintf(stdout, "evidence: %d\n", len(packet.Evidence))
+			fmt.Fprintf(stdout, "source_path: %s\n", packet.SourcePath)
+			fmt.Fprintf(stdout, "source_range: %d-%d\n", packet.StartLine, packet.EndLine)
+			fmt.Fprintf(stdout, "slice_hash: %s\n", packet.SliceHash)
+			fmt.Fprintf(stdout, "pins: %d\n", len(packet.Pins))
+			fmt.Fprintf(stdout, "closure: %d\n", len(packet.Closure))
+			if len(packet.EscalationReasons) > 0 {
+				fmt.Fprintf(stdout, "escalation_reasons: %s\n", strings.Join(packet.EscalationReasons, ", "))
+			}
+			if packet.NextUpgrade != "" {
+				fmt.Fprintf(stdout, "next_upgrade: %s\n", packet.NextUpgrade)
+			}
+		default:
+			fmt.Fprintf(stderr, "invalid --format value: %s\n", *format)
+			return protocol.ExitUsageError
+		}
+		return protocol.ExitSuccess
+	}
 
 	switch strings.ToLower(strings.TrimSpace(*format)) {
 	case "json":

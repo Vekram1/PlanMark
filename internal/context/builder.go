@@ -27,6 +27,7 @@ type L0Packet struct {
 	Horizon    string            `json:"horizon,omitempty"`
 	Deps       []string          `json:"deps,omitempty"`
 	Accept     []string          `json:"accept,omitempty"`
+	Sections   []TaskSectionData `json:"sections,omitempty"`
 	Steps      []TaskStepContext `json:"steps,omitempty"`
 	Evidence   []EvidenceSlice   `json:"evidence,omitempty"`
 	SourcePath string            `json:"source_path"`
@@ -41,6 +42,12 @@ type TaskStepContext struct {
 	Title     string `json:"title"`
 	Checked   bool   `json:"checked,omitempty"`
 	SliceHash string `json:"slice_hash,omitempty"`
+}
+
+type TaskSectionData struct {
+	Key   string   `json:"key,omitempty"`
+	Title string   `json:"title,omitempty"`
+	Body  []string `json:"body,omitempty"`
 }
 
 type EvidenceSlice struct {
@@ -442,6 +449,15 @@ func buildL0Packet(plan ir.PlanIR, task ir.Task, node ir.SourceNode) L0Packet {
 		})
 	}
 
+	sections := make([]TaskSectionData, 0, len(task.Sections))
+	for _, section := range task.Sections {
+		sections = append(sections, TaskSectionData{
+			Key:   section.Key,
+			Title: section.Title,
+			Body:  append([]string(nil), section.Body...),
+		})
+	}
+
 	evidence := make([]EvidenceSlice, 0, len(task.EvidenceNodeRefs))
 	for _, nodeRef := range task.EvidenceNodeRefs {
 		evidenceNode, ok := nodeByRef[nodeRef]
@@ -468,6 +484,7 @@ func buildL0Packet(plan ir.PlanIR, task ir.Task, node ir.SourceNode) L0Packet {
 		Horizon:    task.Horizon,
 		Deps:       append([]string(nil), task.Deps...),
 		Accept:     append([]string(nil), task.Accept...),
+		Sections:   sections,
 		Steps:      steps,
 		Evidence:   evidence,
 		SourcePath: plan.PlanPath,
