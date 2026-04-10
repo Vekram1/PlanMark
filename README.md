@@ -5,7 +5,7 @@
   PlanMark
 </h1>
 
-<h4 align="center">A deterministic compiler from <code>PLAN.md</code> to structured task context, diagnostics, and tracker sync.</h4>
+<h4 align="center">A deterministic compiler from <code>PLAN.md</code> to issue trackers</h4>
 
 <div align="center">
 
@@ -49,6 +49,36 @@ The core model is:
 
 ```text
 PLAN.md -> canonical IR -> context / diagnostics / tracker projection
+```
+
+More concretely:
+
+```text
+                +------------------+
+                |     PLAN.md      |
+                |  canonical plan  |
+                +---------+--------+
+                          |
+                          v
+                +------------------+
+                |    Compile to    |
+                |   canonical IR   |
+                +---------+--------+
+                          |
+          +---------------+----------------+
+          |               |                |
+          v               v                v
++----------------+ +---------------+ +------------------+
+| Task context   | | Diagnostics   | | Tracker sync     |
+| context/open/  | | doctor/query  | | beads/github/    |
+| explain/handoff| | changes       | | linear           |
++--------+-------+ +-------+-------+ +---------+--------+
+         |                 |                   |
+         v                 v                   v
++----------------+ +---------------+ +------------------+
+| Agents / users | | Readiness /   | | Beads + bv or    |
+| act on tasks   | | drift checks  | | other trackers   |
++----------------+ +---------------+ +------------------+
 ```
 
 ---
@@ -111,7 +141,7 @@ planmark compile --plan PLAN.md --out .planmark/tmp/plan.json
 Get task-local context:
 
 ```bash
-planmark context tracker.sync --plan PLAN.md --level L0 --format json
+planmark context tracker.sync --plan PLAN.md --need execute --format json
 ```
 
 Project it into a tracker:
@@ -223,6 +253,28 @@ You do not need a separate DSL. Normal Markdown works, with a small amount of ta
 - `@deps`
 - `@accept`
 
+The most common fields are:
+- `@id`: a stable task identifier used by context, change detection, and tracker sync
+- `@horizon`: when the task should be considered in the execution queue
+- `@deps`: task ids that must be completed first
+- `@accept`: explicit verification targets such as test commands or file checks
+
+For `@horizon`, the typical values are:
+- `now`: actionable work that should be ready for execution now
+- `next`: queued work that follows current priorities
+- `later`: deferred work that should stay visible but out of the immediate queue
+
+In practice:
+- use `now` for tasks an agent or human could pick up immediately
+- use `next` for tasks that matter soon but are not the current focus
+- use `later` for work you want captured without competing with the near-term queue
+
+When syncing to Beads, PlanMark also maps horizon into native Beads priority so the tracker and `bv` reflect the plan's intended queue:
+- `now` -> Beads priority `1`
+- `next` -> Beads priority `2`
+- `later` -> Beads priority `3`
+- any other or missing horizon -> fallback priority `4`
+
 Heading tasks work well when you want rationale, risks, or checklists under the task:
 
 ```md
@@ -255,6 +307,54 @@ Use heading tasks when you want nearby context. Use compact tasks when the work 
 
 ---
 
+## Plan Context
+
+One of PlanMark's main jobs is turning a task in `PLAN.md` into a deterministic context packet that an agent or operator can actually use.
+
+Instead of forcing callers to read the whole plan every time, PlanMark can emit task-scoped context with exact provenance back to the source plan. That context can include:
+- the task id and title
+- dependencies
+- acceptance criteria
+- execution steps
+- evidence references
+- the exact source slice from `PLAN.md`
+
+The source slice matters. A context packet is not just a summary; it carries provenance such as:
+- `source_path`
+- `start_line`
+- `end_line`
+- `slice_hash`
+- `slice_text`
+
+That means a caller can see exactly which part of the plan produced the task, rather than relying on brittle string matching or tracker text.
+
+The most common context commands are:
+
+```bash
+planmark context api.migrate --plan PLAN.md --need execute --format json
+planmark open api.migrate --plan PLAN.md --format json
+planmark explain api.migrate --plan PLAN.md --format rich
+planmark handoff api.migrate --plan PLAN.md --format json
+```
+
+The public interface is need-based:
+- `--need execute`: task-local execution context with the exact `PLAN.md` source slice
+- `--need edit`: task-local context plus source extracts when the task points to files or ranges
+- `--need dependency-check`: task-local context plus dependency-closure context
+- `--need handoff`: a handoff-oriented packet for transferring work cleanly
+
+In practice, the right approach is to start small and escalate only when needed:
+1. `planmark context <id> --need execute`
+2. `planmark open <id|node-ref>`
+3. `planmark explain <id>`
+4. `planmark context <id> --need edit`
+5. `planmark context <id> --need dependency-check`
+
+That keeps context focused while preserving deterministic traceability back to the plan source.
+
+
+---
+
 <a id="core-commands"></a>
 ## Core Commands
 
@@ -277,37 +377,6 @@ Query tasks:
 ```bash
 planmark query --plan PLAN.md --format text
 ```
-
-Get agent-usable task context:
-
-```bash
-planmark context api.migrate --plan PLAN.md --level L0 --format json
-planmark open api.migrate --plan PLAN.md --format json
-planmark explain api.migrate --plan PLAN.md --format rich
-planmark handoff api.migrate --plan PLAN.md --format json
-```
-
-Recommended escalation path for agents:
-
-1. `planmark context <id> --level L0`
-2. `planmark open <id|node-ref>`
-3. `planmark explain <id>`
-4. `planmark context <id> --level L1`
-5. `planmark context <id> --level L2`
-
-That keeps context small while preserving deterministic traceability back to the plan source.
-
-How to choose context in practice:
-
-- Start with need-based retrieval by default:
-  - `planmark context <id> --plan PLAN.md --format json`
-- Use explicit needs when the operation is clear:
-  - `--need execute`
-  - `--need edit`
-  - `--need dependency-check`
-  - `--need handoff`
-- Treat richer context as an escalation, not the starting point.
-- Legacy `--level L0|L1|L2` remains compatibility-only and should not be the primary path.
 
 ---
 
@@ -392,7 +461,7 @@ planmark init --dir . --format text
 planmark compile --plan PLAN.md --out .planmark/tmp/plan.json
 planmark doctor --plan PLAN.md --profile loose --format rich
 planmark query --plan PLAN.md --format text
-planmark context <id> --plan PLAN.md --level L0 --format json
+planmark context <id> --plan PLAN.md --need execute --format json
 planmark open <id|node-ref> --plan PLAN.md --format json
 planmark explain <id> --plan PLAN.md --format rich
 planmark handoff <id|node-ref> --plan PLAN.md --format json
