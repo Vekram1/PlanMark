@@ -80,8 +80,6 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runID(args[1:], stdout, stderr)
 	case "verify-accept":
 		return runVerifyAccept(args[1:], stdout, stderr)
-	case "ai":
-		return runAI(args[1:], stdout, stderr)
 	default:
 		if isHelpToken(args[0]) {
 			renderRootHelp(stdout)
@@ -138,8 +136,6 @@ func runHelp(args []string, stdout io.Writer, stderr io.Writer) int {
 		return runID([]string{"--help"}, stdout, stdout)
 	case "verify-accept":
 		return runVerifyAccept([]string{"--help"}, stdout, stdout)
-	case "ai":
-		return runAI([]string{"--help"}, stdout, stdout)
 	default:
 		fmt.Fprintf(stderr, "unknown help topic: %s\n", args[0])
 		fmt.Fprintln(stderr, "")
@@ -156,7 +152,7 @@ func renderRootHelp(w io.Writer) {
 		"  planmark <command> [flags]",
 		"  plan <command> [flags]",
 		"",
-		"Canonical commands:",
+		"Commands:",
 		"  version         Show CLI, schema, and policy support information",
 		"  update          Check for and install the latest released PlanMark build",
 		"  init            Initialize repo-local PlanMark state and starter files",
@@ -175,9 +171,6 @@ func renderRootHelp(w io.Writer) {
 		"  apply-change    Apply a deterministic plan delta",
 		"  id              Generate a deterministic task id from a title",
 		"  verify-accept   Run an explicit @accept command and record a receipt",
-		"",
-		"Assistive commands:",
-		"  ai              Non-canonical AI helpers for drafting and suggestion flows",
 		"",
 		"Help:",
 		"  planmark help <command>",

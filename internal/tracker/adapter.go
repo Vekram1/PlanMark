@@ -156,6 +156,12 @@ func taskShouldBeClosed(task TaskProjection) bool {
 	return normalizeCanonicalTaskStatus(task.CanonicalStatus) == "done"
 }
 
+func joinRenderedBody(lines []string) string {
+	trimmed := make([]string, len(lines))
+	copy(trimmed, lines)
+	return strings.TrimSpace(strings.Join(trimmed, "\n"))
+}
+
 func normalizedOrderedStrings(values []string) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {

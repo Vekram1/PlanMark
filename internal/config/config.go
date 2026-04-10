@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -21,20 +20,11 @@ type Resolved struct {
 	Profile string
 	Hash    string
 	Tracker TrackerResolved
-	AI      AIResolved
 }
 
 type TrackerResolved struct {
 	Adapter string
 	Profile string
-}
-
-type AIResolved struct {
-	Provider   string
-	Model      string
-	BaseURL    string
-	APIKeyEnv  string
-	TimeoutSec string
 }
 
 type rawConfig struct {
@@ -43,7 +33,6 @@ type rawConfig struct {
 	Profiles      map[string]string
 	Policies      map[string]string
 	Tracker       map[string]string
-	AI            map[string]string
 }
 
 type hashKV struct {
@@ -57,7 +46,6 @@ type hashPayload struct {
 	Profiles      []hashKV `json:"profiles,omitempty"`
 	Policies      []hashKV `json:"policies,omitempty"`
 	Tracker       []hashKV `json:"tracker,omitempty"`
-	AI            []hashKV `json:"ai,omitempty"`
 }
 
 func LoadForPlan(planPath string) (Resolved, error) {
@@ -83,10 +71,6 @@ func LoadForPlan(planPath string) (Resolved, error) {
 	if profile == "" {
 		profile = strings.TrimSpace(cfg.Profiles["doctor"])
 	}
-	ai, err := resolveAI(cfg.AI)
-	if err != nil {
-		return Resolved{}, err
-	}
 	trackerResolved, err := resolveTracker(cfg.Tracker)
 	if err != nil {
 		return Resolved{}, err
@@ -98,7 +82,6 @@ func LoadForPlan(planPath string) (Resolved, error) {
 		Profile: profile,
 		Hash:    canonicalHash(cfg),
 		Tracker: trackerResolved,
-		AI:      ai,
 	}, nil
 }
 
@@ -134,7 +117,6 @@ func parseYAML(content []byte) (rawConfig, error) {
 		Profiles: make(map[string]string),
 		Policies: make(map[string]string),
 		Tracker:  make(map[string]string),
-		AI:       make(map[string]string),
 	}
 	lines := strings.Split(string(content), "\n")
 	section := ""
@@ -161,7 +143,7 @@ func parseYAML(content []byte) (rawConfig, error) {
 				cfg.SchemaVersion = value
 			case "profile":
 				cfg.Profile = value
-			case "profiles", "policies", "tracker", "ai":
+			case "profiles", "policies", "tracker":
 				if value != "" {
 					return rawConfig{}, fmt.Errorf("line %d: %s must be a mapping", lineNumber, key)
 				}
@@ -189,8 +171,6 @@ func parseYAML(content []byte) (rawConfig, error) {
 			cfg.Policies[key] = value
 		case "tracker":
 			cfg.Tracker[key] = value
-		case "ai":
-			cfg.AI[key] = value
 		default:
 			return rawConfig{}, fmt.Errorf("line %d: unsupported section %q", lineNumber, section)
 		}
@@ -224,7 +204,6 @@ func canonicalHash(cfg rawConfig) string {
 		Profiles:      sortedMap(cfg.Profiles),
 		Policies:      sortedMap(cfg.Policies),
 		Tracker:       sortedMap(cfg.Tracker),
-		AI:            sortedMap(cfg.AI),
 	}
 	b, _ := json.Marshal(payload)
 	sum := sha256.Sum256(b)
@@ -261,35 +240,6 @@ func sortedMap(m map[string]string) []hashKV {
 	return out
 }
 
-func resolveAI(entries map[string]string) (AIResolved, error) {
-	allowed := map[string]struct{}{
-		"provider":        {},
-		"model":           {},
-		"base_url":        {},
-		"api_key_env":     {},
-		"timeout_seconds": {},
-	}
-	for key := range entries {
-		trimmed := strings.TrimSpace(key)
-		if _, ok := allowed[trimmed]; !ok {
-			return AIResolved{}, fmt.Errorf("parse %s: unknown ai key %q", fileName, trimmed)
-		}
-	}
-	if raw := strings.TrimSpace(entries["timeout_seconds"]); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n <= 0 {
-			return AIResolved{}, fmt.Errorf("parse %s: ai.timeout_seconds must be a positive integer", fileName)
-		}
-	}
-	return AIResolved{
-		Provider:   strings.TrimSpace(entries["provider"]),
-		Model:      strings.TrimSpace(entries["model"]),
-		BaseURL:    strings.TrimSpace(entries["base_url"]),
-		APIKeyEnv:  strings.TrimSpace(entries["api_key_env"]),
-		TimeoutSec: strings.TrimSpace(entries["timeout_seconds"]),
-	}, nil
-}
-
 func resolveTracker(entries map[string]string) (TrackerResolved, error) {
 	allowed := map[string]struct{}{
 		"adapter": {},
@@ -301,8 +251,13 @@ func resolveTracker(entries map[string]string) (TrackerResolved, error) {
 			return TrackerResolved{}, fmt.Errorf("parse %s: unknown tracker key %q", fileName, trimmed)
 		}
 	}
-	return TrackerResolved{
-		Adapter: strings.TrimSpace(entries["adapter"]),
-		Profile: strings.TrimSpace(entries["profile"]),
-	}, nil
+	adapter := strings.TrimSpace(entries["adapter"])
+	if adapter != "" {
+		switch adapter {
+		case "beads", "linear":
+		default:
+			return TrackerResolved{}, fmt.Errorf("parse %s: unsupported tracker adapter %q", fileName, adapter)
+		}
+	}
+	return TrackerResolved{Adapter: adapter, Profile: strings.TrimSpace(entries["profile"])}, nil
 }

@@ -175,12 +175,17 @@ Recommended escalation path for agents:
 
 That keeps context small while preserving deterministic traceability back to the plan source.
 
-How to choose the level in practice:
+How to choose context in practice:
 
-- Start with `L0` by default. `L0` already includes the task's identity, dependencies, acceptance targets, steps, evidence references, and the exact source slice from `PLAN.md` via `source_path`, `start_line`, `end_line`, `slice_hash`, and `slice_text`.
-- Escalate to `L1` only when the task includes pin-backed references and you need the referenced file or range extracts in addition to the task's own plan slice.
-- Escalate to `L2` only when you need dependency-closure reasoning, such as understanding upstream tasks that must be completed or inspected first.
-- Treat context as a progressive budget. Do not default to `L2` for routine execution work, because it pulls in adjacent task context that is often unnecessary.
+- Start with need-based retrieval by default:
+  - `planmark context <id> --plan PLAN.md --format json`
+- Use explicit needs when the operation is clear:
+  - `--need execute`
+  - `--need edit`
+  - `--need dependency-check`
+  - `--need handoff`
+- Treat richer context as an escalation, not the starting point.
+- Legacy `--level L0|L1|L2` remains compatibility-only and should not be the primary path.
 
 ## Tracker Sync
 
@@ -190,14 +195,13 @@ Preview sync without mutating the tracker:
 
 ```bash
 planmark sync beads --plan PLAN.md --dry-run --format json
-planmark sync github --plan PLAN.md --dry-run --format json
 planmark sync linear --plan PLAN.md --dry-run --format json
 ```
 
 Or select the adapter explicitly:
 
 ```bash
-planmark sync --plan PLAN.md --adapter github --profile compact --dry-run --format json
+planmark sync --plan PLAN.md --adapter linear --profile compact --dry-run --format json
 ```
 
 Built-in render profiles:

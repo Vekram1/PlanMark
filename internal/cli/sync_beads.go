@@ -86,10 +86,6 @@ var newBeadsSyncAdapter = func() beadsSyncAdapter {
 	return tracker.NewBeadsAdapter()
 }
 
-var newGitHubSyncAdapter = func() beadsSyncAdapter {
-	return tracker.NewGitHubAdapter()
-}
-
 var newLinearSyncAdapter = func() beadsSyncAdapter {
 	return tracker.NewLinearAdapter()
 }
@@ -134,7 +130,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
 	stateDir := fs.String("state-dir", ".planmark", "path to local PlanMark `state-dir`")
-	adapterFlag := fs.String("adapter", "", "tracker adapter: beads|github|linear")
+	adapterFlag := fs.String("adapter", "", "tracker adapter: beads|linear")
 	profileFlag := fs.String("profile", "", "render profile: default|compact|agentic|handoff")
 	deletionPolicy := fs.String("deletion-policy", string(syncplanner.DefaultDeletionPolicy()), "deletion policy for PLAN removals: mark-stale|close|detach|delete")
 	dryRun := fs.Bool("dry-run", false, "preview without writing sync manifest")
@@ -149,7 +145,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	remaining := fs.Args()
 	if len(remaining) > 1 {
-		fmt.Fprintln(stderr, "usage: plan sync [beads|github|linear] --plan <path> [--adapter beads|github|linear] [--profile default|compact|agentic|handoff] [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: plan sync [beads|linear] --plan <path> [--adapter beads|linear] [--profile default|compact|agentic|handoff] [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
 		return protocol.ExitUsageError
 	}
 	if len(remaining) == 1 {
@@ -662,7 +658,7 @@ func resolveSyncSelection(target string, adapterFlag string, profileFlag string,
 		return "", "", fmt.Errorf("--adapter %q conflicts with positional target %q", adapterFlag, target)
 	}
 	switch resolvedAdapter {
-	case "beads", "github", "linear":
+	case "beads", "linear":
 	default:
 		return "", "", fmt.Errorf("unsupported sync adapter %q", resolvedAdapter)
 	}
@@ -685,8 +681,6 @@ func instantiateSyncAdapter(name string) (beadsSyncAdapter, error) {
 	switch strings.TrimSpace(name) {
 	case "beads":
 		return newBeadsSyncAdapter(), nil
-	case "github":
-		return newGitHubSyncAdapter(), nil
 	case "linear":
 		return newLinearSyncAdapter(), nil
 	default:

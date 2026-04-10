@@ -450,48 +450,6 @@ func TestSyncBeadsReconcilesNativeDependenciesAfterPush(t *testing.T) {
 	}
 }
 
-func TestSyncUsesConfigSelectedAdapterAndProfile(t *testing.T) {
-	tmp := t.TempDir()
-	planPath := filepath.Join(tmp, "PLAN.md")
-	stateDir := filepath.Join(tmp, ".planmark")
-	configPath := filepath.Join(tmp, ".planmark.yaml")
-	planBody := strings.Join([]string{
-		"- [ ] Task sync github config",
-		"  @id fixture.task.sync.github",
-		"  @horizon now",
-		"  @accept cmd:go test ./...",
-	}, "\n")
-	configBody := strings.Join([]string{
-		"schema_version: v0.1",
-		"tracker:",
-		"  adapter: github",
-		"  profile: compact",
-	}, "\n")
-	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
-		t.Fatalf("write plan fixture: %v", err)
-	}
-	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
-		t.Fatalf("write config fixture: %v", err)
-	}
-
-	var out bytes.Buffer
-	var errOut bytes.Buffer
-	exit := Run([]string{"sync", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
-	if exit != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
-	}
-	if !strings.Contains(out.String(), "\"target\":\"github\"") {
-		t.Fatalf("expected github target in json output, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "\"command\":\"sync github\"") {
-		t.Fatalf("expected sync github command in json output, got %q", out.String())
-	}
-	manifestPath := filepath.Join(stateDir, "sync", "github-manifest.json")
-	if _, err := os.Stat(manifestPath); err != nil {
-		t.Fatalf("expected github manifest at %q: %v", manifestPath, err)
-	}
-}
-
 func TestSyncUsesLinearAdapterAndWritesManifest(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
@@ -579,7 +537,7 @@ func TestSyncCLIProfileOverridesConfigProfile(t *testing.T) {
 func TestResolveSyncSelectionPrefersAdapterFlagOverConfig(t *testing.T) {
 	cfg := config.Resolved{
 		Tracker: config.TrackerResolved{
-			Adapter: "github",
+			Adapter: "linear",
 			Profile: "compact",
 		},
 	}
@@ -597,7 +555,7 @@ func TestResolveSyncSelectionPrefersAdapterFlagOverConfig(t *testing.T) {
 }
 
 func TestResolveSyncSelectionRejectsConflictingTargetAndAdapterFlag(t *testing.T) {
-	_, _, err := resolveSyncSelection("beads", "github", "", config.Resolved{})
+	_, _, err := resolveSyncSelection("beads", "linear", "", config.Resolved{})
 	if err == nil || !strings.Contains(err.Error(), "conflicts") {
 		t.Fatalf("expected target/adapter conflict error, got %v", err)
 	}

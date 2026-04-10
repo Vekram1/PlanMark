@@ -30,17 +30,8 @@ profiles:
 
 # Optional tracker sync defaults:
 # tracker:
-#   adapter: beads   # or: github, linear
+#   adapter: beads   # or: linear
 #   profile: default
-
-# Optional AI provider settings for "plan ai apply-fix":
-# ai:
-#   provider: deterministic_mock
-#   # provider: openai_compatible
-#   # model: gpt-4o-mini
-#   # base_url: https://api.openai.com/v1
-#   # api_key_env: OPENAI_API_KEY
-#   # timeout_seconds: 30
 `
 	defaultAgentsGuideBody = `<!-- planmark:init:start -->
 ## PlanMark CLI Access (Managed)
@@ -57,15 +48,8 @@ When operating in this project, you can use these ` + "`plan`" + ` commands:
 - ` + "`plan explain <id> --plan <path> [--format text|rich|json]`" + `
 - ` + "`plan handoff <id|node-ref> --plan <path> [--format text|json]`" + `  ← bounded transfer packet built from need-based selection
 - ` + "`plan query --plan <path> [--horizon now|next|later] [--ready|--blocked] [--format text|json]`" + `
-- ` + "`plan sync [beads|github|linear] --plan <path> [--adapter beads|github|linear] [--profile default|compact|agentic|handoff] [--dry-run] [--format text|json]`" + `
+- ` + "`plan sync [beads|linear] --plan <path> [--adapter beads|linear] [--profile default|compact|agentic|handoff] [--dry-run] [--format text|json]`" + `
 - ` + "`plan changes --plan <path> [--format text|json]`" + `
-
-Optional assistive (non-canonical) commands:
-
-- ` + "`plan ai suggest-accept <id> --plan <path> [--format text|json]`" + `
-- ` + "`plan ai summarize-closure <id> --plan <path> [--format text|json]`" + `
-- ` + "`plan ai draft-beads --plan <path> [--horizon all|now|next|later] [--limit N] [--format text|json]`" + `
-- ` + "`plan ai apply-fix --plan <path> [--approve] [--format text|json]`" + `
 
 Canonical truth remains ` + "`PLAN.md`" + `; Beads/tracker state is projected.
 <!-- planmark:init:end -->

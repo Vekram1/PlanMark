@@ -40,10 +40,9 @@ Non-negotiables:
 Core command groups:
 - Compile/validate: `compile`, `doctor`, `changes`
 - Context/retrieval: `context`, `open`, `explain`, `pack`, `query`
-- Sync/reconcile: `sync [beads|github|linear]`
+- Sync/reconcile: `sync [beads|linear]`
 - Replanning: `propose-change`, `apply-change`
 - Metadata/introspection: `version`, `id`
-- Non-canonical AI helpers: `ai ...`
 
 Machine behavior expectations:
 - stable JSON envelopes for `--format json`
