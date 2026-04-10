@@ -349,6 +349,12 @@ func TestBeadsPushClosesCanonicallyDoneIssueWithUnchangedProjection(t *testing.T
 		switch args[0] {
 		case "show":
 			return []byte(`[{"id":"bd-202","status":"open"}]`), nil
+		case "dep":
+			if len(args) >= 2 && args[1] == "list" {
+				return []byte(`[]`), nil
+			}
+			t.Fatalf("unexpected dep command: %#v", args)
+			return nil, nil
 		case "close":
 			return []byte(`[{"id":"bd-202","status":"closed"}]`), nil
 		default:
@@ -386,8 +392,69 @@ func TestBeadsPushClosesCanonicallyDoneIssueWithUnchangedProjection(t *testing.T
 	if !result.Mutated || !strings.Contains(result.Diagnostic, "canonically completed") {
 		t.Fatalf("expected canonical completion close mutation, got %#v", result)
 	}
-	if len(seen) != 2 || seen[0][0] != "show" || seen[1][0] != "close" {
-		t.Fatalf("expected show->close flow, got %#v", seen)
+	if len(seen) != 3 || seen[0][0] != "show" || seen[1][0] != "dep" || seen[1][1] != "list" || seen[2][0] != "close" {
+		t.Fatalf("expected show->dep list->close flow, got %#v", seen)
+	}
+}
+
+func TestBeadsPushClosesCanonicallyDoneIssueAfterRemovingDependencies(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	var seen [][]string
+	runBrCommand = func(args ...string) ([]byte, error) {
+		seen = append(seen, append([]string(nil), args...))
+		switch {
+		case reflect.DeepEqual(args, []string{"show", "bd-202", "--json"}):
+			return []byte(`[{"id":"bd-202","title":"Add evaluation and telemetry for context sufficiency","status":"open","external_ref":"pm.context.eval"}]`), nil
+		case reflect.DeepEqual(args, []string{"dep", "list", "bd-202", "--json"}):
+			return []byte(`[{"issue_id":"bd-202","depends_on_id":"bd-parent","type":"blocks"}]`), nil
+		case reflect.DeepEqual(args, []string{"dep", "remove", "bd-202", "bd-parent", "--json"}):
+			return []byte(`{"ok":true}`), nil
+		case len(args) >= 2 && args[0] == "close" && args[1] == "bd-202":
+			return []byte(`[{"id":"bd-202","status":"closed"}]`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
+	adapter := NewBeadsAdapter()
+	task := TaskProjection{
+		ID:              "pm.context.eval",
+		Title:           "Add evaluation and telemetry for context sufficiency",
+		CanonicalStatus: "done",
+		Provenance: TaskProvenance{
+			Path:       "PLAN.md",
+			StartLine:  1,
+			EndLine:    8,
+			SourceHash: strings.Repeat("d", 64),
+		},
+		Acceptance: []string{"cmd:test -f docs/specs/context-selection-v0.1.md"},
+	}
+	hash, err := TaskProjectionHash(task)
+	if err != nil {
+		t.Fatalf("projection hash: %v", err)
+	}
+	adapter.remoteIDByID[task.ID] = "bd-202"
+	adapter.projectionHashByID[task.ID] = hash
+	adapter.sourceHashByID[task.ID] = task.Provenance.SourceHash
+	adapter.provenanceByID[task.ID] = task.Provenance
+
+	result, err := adapter.PushTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("push task: %v", err)
+	}
+	if !result.Mutated || !strings.Contains(result.Diagnostic, "canonically completed") {
+		t.Fatalf("expected canonical completion close mutation, got %#v", result)
+	}
+	want := [][]string{
+		{"show", "bd-202", "--json"},
+		{"dep", "list", "bd-202", "--json"},
+		{"dep", "remove", "bd-202", "bd-parent", "--json"},
+	}
+	if len(seen) != 4 || !reflect.DeepEqual(seen[:3], want) || seen[3][0] != "close" || seen[3][1] != "bd-202" {
+		t.Fatalf("expected show->dep list->dep remove->close flow, got %#v", seen)
 	}
 }
 
