@@ -1,4 +1,4 @@
-<img width="1024" height="1024" alt="PlanMark project task overview logo" src="https://github.com/user-attachments/assets/d4be234d-4c58-47cd-a29b-7951fefe5ed2" />
+<img width="200" height="200" alt="PlanMark project task overview logo" src="https://github.com/user-attachments/assets/d4be234d-4c58-47cd-a29b-7951fefe5ed2" />
 # PlanMark
 ![planmark-demo](https://github.com/user-attachments/assets/64f7eac6-20f3-4a16-8c0b-794610a0cf95)
 
