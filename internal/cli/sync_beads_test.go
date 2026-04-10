@@ -13,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/vikramoddiraju/planmark/internal/config"
+	"github.com/vikramoddiraju/planmark/internal/diag"
 	"github.com/vikramoddiraju/planmark/internal/journal"
+	"github.com/vikramoddiraju/planmark/internal/protocol"
 	"github.com/vikramoddiraju/planmark/internal/tracker"
 )
 
@@ -338,6 +340,14 @@ func TestSyncBeadsProjectsRicherSemanticTaskFields(t *testing.T) {
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
 	planBody := strings.Join([]string{
+		"## Schema task",
+		"@id api.schema",
+		"@horizon later",
+		"",
+		"## Runtime task",
+		"@id api.runtime",
+		"@horizon later",
+		"",
 		"## Add migration",
 		"@id api.migrate",
 		"@horizon now",
@@ -367,11 +377,20 @@ func TestSyncBeadsProjectsRicherSemanticTaskFields(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
 	}
-	if len(adapter.pushed) != 1 {
-		t.Fatalf("expected one pushed task projection, got %#v", adapter.pushed)
+	if len(adapter.pushed) != 3 {
+		t.Fatalf("expected three pushed task projections, got %#v", adapter.pushed)
 	}
 
-	got := adapter.pushed[0]
+	var got tracker.TaskProjection
+	for _, projection := range adapter.pushed {
+		if projection.ID == "api.migrate" {
+			got = projection
+			break
+		}
+	}
+	if got.ID == "" {
+		t.Fatalf("expected api.migrate projection in pushed set, got %#v", adapter.pushed)
+	}
 	if got.ID != "api.migrate" || got.Title != "Add migration" {
 		t.Fatalf("unexpected projected identity/title: %#v", got)
 	}
@@ -447,48 +466,6 @@ func TestSyncBeadsReconcilesNativeDependenciesAfterPush(t *testing.T) {
 	}
 	if !reflect.DeepEqual(adapter.dependencySynced[1].Dependencies, []string{"fixture.task.dep"}) {
 		t.Fatalf("expected dependency sync payload to retain deps, got %#v", adapter.dependencySynced[1])
-	}
-}
-
-func TestSyncUsesConfigSelectedAdapterAndProfile(t *testing.T) {
-	tmp := t.TempDir()
-	planPath := filepath.Join(tmp, "PLAN.md")
-	stateDir := filepath.Join(tmp, ".planmark")
-	configPath := filepath.Join(tmp, ".planmark.yaml")
-	planBody := strings.Join([]string{
-		"- [ ] Task sync github config",
-		"  @id fixture.task.sync.github",
-		"  @horizon now",
-		"  @accept cmd:go test ./...",
-	}, "\n")
-	configBody := strings.Join([]string{
-		"schema_version: v0.1",
-		"tracker:",
-		"  adapter: github",
-		"  profile: compact",
-	}, "\n")
-	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
-		t.Fatalf("write plan fixture: %v", err)
-	}
-	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
-		t.Fatalf("write config fixture: %v", err)
-	}
-
-	var out bytes.Buffer
-	var errOut bytes.Buffer
-	exit := Run([]string{"sync", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
-	if exit != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%q", exit, errOut.String())
-	}
-	if !strings.Contains(out.String(), "\"target\":\"github\"") {
-		t.Fatalf("expected github target in json output, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "\"command\":\"sync github\"") {
-		t.Fatalf("expected sync github command in json output, got %q", out.String())
-	}
-	manifestPath := filepath.Join(stateDir, "sync", "github-manifest.json")
-	if _, err := os.Stat(manifestPath); err != nil {
-		t.Fatalf("expected github manifest at %q: %v", manifestPath, err)
 	}
 }
 
@@ -579,7 +556,7 @@ func TestSyncCLIProfileOverridesConfigProfile(t *testing.T) {
 func TestResolveSyncSelectionPrefersAdapterFlagOverConfig(t *testing.T) {
 	cfg := config.Resolved{
 		Tracker: config.TrackerResolved{
-			Adapter: "github",
+			Adapter: "linear",
 			Profile: "compact",
 		},
 	}
@@ -597,7 +574,7 @@ func TestResolveSyncSelectionPrefersAdapterFlagOverConfig(t *testing.T) {
 }
 
 func TestResolveSyncSelectionRejectsConflictingTargetAndAdapterFlag(t *testing.T) {
-	_, _, err := resolveSyncSelection("beads", "github", "", config.Resolved{})
+	_, _, err := resolveSyncSelection("beads", "linear", "", config.Resolved{})
 	if err == nil || !strings.Contains(err.Error(), "conflicts") {
 		t.Fatalf("expected target/adapter conflict error, got %v", err)
 	}
@@ -1559,7 +1536,6 @@ func TestSyncBeadsRecoversAfterManifestLossAndPlanDeletion(t *testing.T) {
 }
 
 func TestSyncBeadsDuplicateDesiredIDsSurfaceConflictWithoutMutation(t *testing.T) {
-	adapter := installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -1583,46 +1559,19 @@ func TestSyncBeadsDuplicateDesiredIDsSurfaceConflictWithoutMutation(t *testing.T
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
-	if exit != 0 {
-		t.Fatalf("expected duplicate-id sync to exit 0 with surfaced conflict, got %d stderr=%q", exit, errOut.String())
+	if exit != protocol.ExitValidationFailed {
+		t.Fatalf("expected duplicate-id sync to fail validation, got %d stderr=%q stdout=%q", exit, errOut.String(), out.String())
 	}
-	if len(adapter.pushed) != 0 {
-		t.Fatalf("expected duplicate desired id to prevent tracker mutation, got %#v", adapter.pushed)
+	if out.Len() != 0 {
+		t.Fatalf("expected no sync payload on duplicate desired id validation failure, got %q", out.String())
 	}
-	if len(adapter.dependencySynced) != 0 {
-		t.Fatalf("expected duplicate desired id to prevent dependency mutation, got %#v", adapter.dependencySynced)
-	}
-
-	var payload struct {
-		Data struct {
-			CreateCount   int `json:"create_count"`
-			UpdateCount   int `json:"update_count"`
-			NoopCount     int `json:"noop_count"`
-			ConflictCount int `json:"conflict_count"`
-			TasksMutated  int `json:"tasks_mutated"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
-		t.Fatalf("decode duplicate-id output: %v output=%q", err, out.String())
-	}
-	if payload.Data.ConflictCount != 1 {
-		t.Fatalf("expected one surfaced conflict for duplicate desired id, got %#v", payload.Data)
-	}
-	if payload.Data.CreateCount != 0 || payload.Data.UpdateCount != 0 || payload.Data.NoopCount != 0 || payload.Data.TasksMutated != 0 {
-		t.Fatalf("expected duplicate desired id to avoid create/update/no-op mutation, got %#v", payload.Data)
+	if !strings.Contains(errOut.String(), string(diag.CodeDuplicateTaskID)) {
+		t.Fatalf("expected duplicate task diagnostic, got %q", errOut.String())
 	}
 
 	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
-	manifestRaw, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatalf("read manifest: %v", err)
-	}
-	var rewritten tracker.SyncManifest
-	if err := json.Unmarshal(manifestRaw, &rewritten); err != nil {
-		t.Fatalf("decode manifest: %v", err)
-	}
-	if len(rewritten.Entries) != 0 {
-		t.Fatalf("expected duplicate desired id sync to keep manifest empty, got %s", string(manifestRaw))
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no manifest write on duplicate desired id validation failure, stat err=%v", err)
 	}
 }
 
@@ -1736,6 +1685,350 @@ func TestSyncBeadsDuplicateStaleTrackerCandidatesSurfaceConflict(t *testing.T) {
 	}
 	if payload.Data.MarkStaleCount != 0 || payload.Data.TasksMutated != 0 {
 		t.Fatalf("expected duplicate stale tracker candidates to avoid stale mutation, got %#v", payload.Data)
+	}
+}
+
+func TestSyncBeadsManifestAndMatchingStaleCandidateDoNotConflict(t *testing.T) {
+	adapter := installCaptureBeadsAdapter(t)
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	if err := os.WriteFile(planPath, []byte("# Empty\n"), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("mkdir manifest dir: %v", err)
+	}
+	manifest := tracker.SyncManifest{
+		SchemaVersion: tracker.SyncManifestSchemaVersionV01,
+		Entries: []tracker.SyncManifestEntry{
+			{ID: "fixture.task.sync.deleted", RemoteID: "bd-1", ProjectionHash: "hash-a"},
+		},
+	}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	raw = append(raw, '\n')
+	if err := os.WriteFile(manifestPath, raw, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	adapter.staleCandidates = []tracker.SyncManifestEntry{
+		{ID: "fixture.task.sync.deleted", RemoteID: "bd-1", ProjectionHash: "hash-a"},
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected matching manifest/stale candidate sync to exit 0, got %d stderr=%q", exit, errOut.String())
+	}
+	if !reflect.DeepEqual(adapter.staled, []string{"fixture.task.sync.deleted"}) {
+		t.Fatalf("expected deleted task to be marked stale once, got %#v", adapter.staled)
+	}
+
+	var payload struct {
+		Data struct {
+			MarkStaleCount int `json:"mark_stale_count"`
+			ConflictCount  int `json:"conflict_count"`
+			TasksMutated   int `json:"tasks_mutated"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode matching manifest/stale output: %v output=%q", err, out.String())
+	}
+	if payload.Data.ConflictCount != 0 {
+		t.Fatalf("expected no conflict for matching manifest and stale candidate, got %#v", payload.Data)
+	}
+	if payload.Data.MarkStaleCount != 1 || payload.Data.TasksMutated != 1 {
+		t.Fatalf("expected one stale mutation for deleted task, got %#v", payload.Data)
+	}
+}
+
+func TestSyncBeadsDeletesTaskByPositionAcrossNAndNPlusOnePlans(t *testing.T) {
+	type taskSpec struct {
+		ID    string
+		Title string
+	}
+
+	buildPlan := func(tasks []taskSpec) string {
+		lines := []string{"# Deletion Matrix", ""}
+		for i, task := range tasks {
+			lines = append(lines,
+				fmt.Sprintf("## Section %d", i+1),
+				fmt.Sprintf("- [ ] %s", task.Title),
+				fmt.Sprintf("  @id %s", task.ID),
+				"  @horizon now",
+				"  @accept cmd:go test ./...",
+				"",
+			)
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	cases := []struct {
+		name      string
+		tasks     []taskSpec
+		deleteIdx int
+	}{
+		{name: "n=2 delete first", tasks: []taskSpec{{ID: "fixture.task.a", Title: "Task A"}, {ID: "fixture.task.b", Title: "Task B"}}, deleteIdx: 0},
+		{name: "n=2 delete last", tasks: []taskSpec{{ID: "fixture.task.a", Title: "Task A"}, {ID: "fixture.task.b", Title: "Task B"}}, deleteIdx: 1},
+		{name: "n+1 delete first", tasks: []taskSpec{{ID: "fixture.task.a", Title: "Task A"}, {ID: "fixture.task.b", Title: "Task B"}, {ID: "fixture.task.c", Title: "Task C"}}, deleteIdx: 0},
+		{name: "n+1 delete middle", tasks: []taskSpec{{ID: "fixture.task.a", Title: "Task A"}, {ID: "fixture.task.b", Title: "Task B"}, {ID: "fixture.task.c", Title: "Task C"}}, deleteIdx: 1},
+		{name: "n+1 delete last", tasks: []taskSpec{{ID: "fixture.task.a", Title: "Task A"}, {ID: "fixture.task.b", Title: "Task B"}, {ID: "fixture.task.c", Title: "Task C"}}, deleteIdx: 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter := installCaptureBeadsAdapter(t)
+			tmp := t.TempDir()
+			planPath := filepath.Join(tmp, "PLAN.md")
+			stateDir := filepath.Join(tmp, ".planmark")
+
+			initialPlan := buildPlan(tc.tasks)
+			if err := os.WriteFile(planPath, []byte(initialPlan), 0o644); err != nil {
+				t.Fatalf("write initial plan: %v", err)
+			}
+
+			var out bytes.Buffer
+			var errOut bytes.Buffer
+			exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+			if exit != 0 {
+				t.Fatalf("expected initial sync success, got %d stderr=%q", exit, errOut.String())
+			}
+
+			deletedID := tc.tasks[tc.deleteIdx].ID
+			remainingTasks := append([]taskSpec(nil), tc.tasks[:tc.deleteIdx]...)
+			remainingTasks = append(remainingTasks, tc.tasks[tc.deleteIdx+1:]...)
+			if err := os.WriteFile(planPath, []byte(buildPlan(remainingTasks)), 0o644); err != nil {
+				t.Fatalf("write updated plan: %v", err)
+			}
+
+			adapter.pushed = nil
+			adapter.staled = nil
+			adapter.dependencySynced = nil
+
+			out.Reset()
+			errOut.Reset()
+			exit = Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+			if exit != 0 {
+				t.Fatalf("expected deletion sync success, got %d stderr=%q", exit, errOut.String())
+			}
+
+			if !reflect.DeepEqual(adapter.staled, []string{deletedID}) {
+				t.Fatalf("expected exactly deleted task %q to be marked stale, got %#v", deletedID, adapter.staled)
+			}
+
+			var payload struct {
+				Data struct {
+					MarkStaleCount int `json:"mark_stale_count"`
+					ConflictCount  int `json:"conflict_count"`
+					TasksMutated   int `json:"tasks_mutated"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+				t.Fatalf("decode deletion sync output: %v output=%q", err, out.String())
+			}
+			if payload.Data.ConflictCount != 0 {
+				t.Fatalf("expected no conflict for deletion of %q in %v, got %#v", deletedID, tc.tasks, payload.Data)
+			}
+			if payload.Data.MarkStaleCount != 1 || payload.Data.TasksMutated != 1 {
+				t.Fatalf("expected one stale mutation for deletion of %q in %v, got %#v", deletedID, tc.tasks, payload.Data)
+			}
+
+			manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
+			manifestRaw, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatalf("read manifest: %v", err)
+			}
+			var manifest tracker.SyncManifest
+			if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+				t.Fatalf("decode manifest: %v", err)
+			}
+			gotIDs := make([]string, 0, len(manifest.Entries))
+			for _, entry := range manifest.Entries {
+				gotIDs = append(gotIDs, entry.ID)
+			}
+			slices.Sort(gotIDs)
+			wantIDs := make([]string, 0, len(remainingTasks))
+			for _, task := range remainingTasks {
+				wantIDs = append(wantIDs, task.ID)
+			}
+			slices.Sort(wantIDs)
+			if !reflect.DeepEqual(gotIDs, wantIDs) {
+				t.Fatalf("expected manifest IDs %#v after deleting %q, got %#v", wantIDs, deletedID, gotIDs)
+			}
+		})
+	}
+}
+
+func TestSyncBeadsDeleteThenReAddSameIDDoesNotConflict(t *testing.T) {
+	adapter := installCaptureBeadsAdapter(t)
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+
+	initialPlan := strings.Join([]string{
+		"# ReAdd Matrix",
+		"",
+		"## First",
+		"- [ ] Task A",
+		"  @id fixture.task.a",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"",
+		"## Second",
+		"- [ ] Task B",
+		"  @id fixture.task.b",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	deletedPlan := strings.Join([]string{
+		"# ReAdd Matrix",
+		"",
+		"## Second",
+		"- [ ] Task B",
+		"  @id fixture.task.b",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+
+	if err := os.WriteFile(planPath, []byte(initialPlan), 0o644); err != nil {
+		t.Fatalf("write initial plan: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected initial sync success, got %d stderr=%q", exit, errOut.String())
+	}
+
+	if err := os.WriteFile(planPath, []byte(deletedPlan), 0o644); err != nil {
+		t.Fatalf("write deleted plan: %v", err)
+	}
+	adapter.pushed = nil
+	adapter.staled = nil
+	out.Reset()
+	errOut.Reset()
+	exit = Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected deletion sync success, got %d stderr=%q", exit, errOut.String())
+	}
+	if !reflect.DeepEqual(adapter.staled, []string{"fixture.task.a"}) {
+		t.Fatalf("expected fixture.task.a to be retired on deletion, got %#v", adapter.staled)
+	}
+
+	if err := os.WriteFile(planPath, []byte(initialPlan), 0o644); err != nil {
+		t.Fatalf("write restored plan: %v", err)
+	}
+	adapter.pushed = nil
+	adapter.staled = nil
+	out.Reset()
+	errOut.Reset()
+	exit = Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != 0 {
+		t.Fatalf("expected re-add sync success, got %d stderr=%q", exit, errOut.String())
+	}
+
+	var payload struct {
+		Data struct {
+			CreateCount   int `json:"create_count"`
+			UpdateCount   int `json:"update_count"`
+			NoopCount     int `json:"noop_count"`
+			MarkStaleCount int `json:"mark_stale_count"`
+			ConflictCount int `json:"conflict_count"`
+			TasksMutated  int `json:"tasks_mutated"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode re-add sync output: %v output=%q", err, out.String())
+	}
+	if payload.Data.ConflictCount != 0 {
+		t.Fatalf("expected no conflict when re-adding same id, got %#v", payload.Data)
+	}
+	if payload.Data.CreateCount != 1 || payload.Data.MarkStaleCount != 0 {
+		t.Fatalf("expected re-add to recreate exactly one task, got %#v", payload.Data)
+	}
+	if payload.Data.TasksMutated != 1 {
+		t.Fatalf("expected only re-added task to mutate, got %#v", payload.Data)
+	}
+	if len(adapter.staled) != 0 {
+		t.Fatalf("expected no stale mutation during re-add, got %#v", adapter.staled)
+	}
+	if len(adapter.pushed) != 2 {
+		t.Fatalf("expected sync to consider both desired tasks on re-add, got %#v", adapter.pushed)
+	}
+
+	manifestPath := filepath.Join(stateDir, "sync", "beads-manifest.json")
+	manifestRaw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest tracker.SyncManifest
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	gotIDs := make([]string, 0, len(manifest.Entries))
+	for _, entry := range manifest.Entries {
+		gotIDs = append(gotIDs, entry.ID)
+	}
+	slices.Sort(gotIDs)
+	if !reflect.DeepEqual(gotIDs, []string{"fixture.task.a", "fixture.task.b"}) {
+		t.Fatalf("expected both IDs in manifest after re-add, got %#v", gotIDs)
+	}
+}
+
+func TestSyncBeadsWarnsOnUnknownDependencyAndContinues(t *testing.T) {
+	adapter := installCaptureBeadsAdapter(t)
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	stateDir := filepath.Join(tmp, ".planmark")
+	planBody := strings.Join([]string{
+		"# Demo",
+		"",
+		"## Publish docs",
+		"- [ ] Add public launch walkthrough",
+		"  @id demo.docs.launch",
+		"  @horizon later",
+		"  @deps demo.sync.beads",
+		"  @accept cmd:test -f README.md",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
+		t.Fatalf("write plan fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	exit := Run([]string{"sync", "beads", "--plan", planPath, "--state-dir", stateDir, "--format", "json"}, &out, &errOut)
+	if exit != protocol.ExitSuccess {
+		t.Fatalf("expected sync success with dependency warning, got %d stderr=%q stdout=%q", exit, errOut.String(), out.String())
+	}
+	if !strings.Contains(errOut.String(), "warning "+string(diag.CodeUnknownDependency)) {
+		t.Fatalf("expected UNKNOWN_DEPENDENCY warning, got %q", errOut.String())
+	}
+	if len(adapter.pushed) != 1 {
+		t.Fatalf("expected dependent task to remain syncable, got %#v", adapter.pushed)
+	}
+
+	var payload struct {
+		Data struct {
+			CreateCount   int `json:"create_count"`
+			ConflictCount int `json:"conflict_count"`
+			TasksMutated  int `json:"tasks_mutated"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode warning sync output: %v output=%q", err, out.String())
+	}
+	if payload.Data.ConflictCount != 0 {
+		t.Fatalf("expected no conflict for unknown dependency warning path, got %#v", payload.Data)
+	}
+	if payload.Data.CreateCount != 1 || payload.Data.TasksMutated != 1 {
+		t.Fatalf("expected dependent task to still sync as create, got %#v", payload.Data)
 	}
 }
 

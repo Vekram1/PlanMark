@@ -34,7 +34,7 @@ func TestLoadForPlanUsesNearestConfigAndProfilesDoctor(t *testing.T) {
 	}
 
 	configPath := filepath.Join(repoRoot, ".planmark.yaml")
-	configBody := "schema_version: v0.1\nprofiles:\n  doctor: exec\npolicies:\n  determinism: v0.1\ntracker:\n  adapter: github\n  profile: compact\nai:\n  provider: openai_compatible\n  model: gpt-4o-mini\n  base_url: http://127.0.0.1:8080/v1\n  api_key_env: PLANMARK_AI_KEY\n"
+	configBody := "schema_version: v0.1\nprofiles:\n  doctor: exec\npolicies:\n  determinism: v0.1\ntracker:\n  adapter: linear\n  profile: compact\n"
 	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
 		t.Fatalf("write config fixture: %v", err)
 	}
@@ -60,23 +60,11 @@ func TestLoadForPlanUsesNearestConfigAndProfilesDoctor(t *testing.T) {
 	if resolved.Hash == "" {
 		t.Fatalf("expected non-empty hash")
 	}
-	if resolved.Tracker.Adapter != "github" {
-		t.Fatalf("expected tracker adapter github, got %q", resolved.Tracker.Adapter)
+	if resolved.Tracker.Adapter != "linear" {
+		t.Fatalf("expected tracker adapter linear, got %q", resolved.Tracker.Adapter)
 	}
 	if resolved.Tracker.Profile != "compact" {
 		t.Fatalf("expected tracker profile compact, got %q", resolved.Tracker.Profile)
-	}
-	if resolved.AI.Provider != "openai_compatible" {
-		t.Fatalf("expected ai provider openai_compatible, got %q", resolved.AI.Provider)
-	}
-	if resolved.AI.Model != "gpt-4o-mini" {
-		t.Fatalf("expected ai model gpt-4o-mini, got %q", resolved.AI.Model)
-	}
-	if resolved.AI.BaseURL != "http://127.0.0.1:8080/v1" {
-		t.Fatalf("expected ai base_url set, got %q", resolved.AI.BaseURL)
-	}
-	if resolved.AI.APIKeyEnv != "PLANMARK_AI_KEY" {
-		t.Fatalf("expected ai api_key_env set, got %q", resolved.AI.APIKeyEnv)
 	}
 }
 
@@ -96,7 +84,7 @@ func TestLoadForPlanRejectsUnknownTopLevelKey(t *testing.T) {
 	}
 }
 
-func TestLoadForPlanRejectsUnknownAIKey(t *testing.T) {
+func TestLoadForPlanRejectsRemovedAITopLevelKey(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	if err := os.WriteFile(planPath, []byte("- [ ] Task\n  @id task.one\n"), 0o644); err != nil {
@@ -108,7 +96,7 @@ func TestLoadForPlanRejectsUnknownAIKey(t *testing.T) {
 	}
 
 	if _, err := LoadForPlan(planPath); err == nil {
-		t.Fatalf("expected parse error for unknown ai key")
+		t.Fatalf("expected parse error for removed ai top-level key")
 	}
 }
 
@@ -128,18 +116,18 @@ func TestLoadForPlanRejectsUnknownTrackerKey(t *testing.T) {
 	}
 }
 
-func TestLoadForPlanRejectsInvalidAITimeout(t *testing.T) {
+func TestLoadForPlanRejectsUnsupportedTrackerAdapter(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	if err := os.WriteFile(planPath, []byte("- [ ] Task\n  @id task.one\n"), 0o644); err != nil {
 		t.Fatalf("write plan fixture: %v", err)
 	}
 	configPath := filepath.Join(tmp, ".planmark.yaml")
-	if err := os.WriteFile(configPath, []byte("ai:\n  timeout_seconds: nope\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("tracker:\n  adapter: github\n"), 0o644); err != nil {
 		t.Fatalf("write config fixture: %v", err)
 	}
 
 	if _, err := LoadForPlan(planPath); err == nil {
-		t.Fatalf("expected parse error for invalid ai.timeout_seconds")
+		t.Fatalf("expected parse error for unsupported tracker adapter")
 	}
 }

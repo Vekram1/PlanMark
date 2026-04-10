@@ -105,8 +105,8 @@ func TestRootHelpReturnsZeroAndShowsCommandGroups(t *testing.T) {
 		t.Fatalf("expected exit 0 for root help, got %d stderr=%q", exit, errOut.String())
 	}
 	rendered := out.String()
-	if !strings.Contains(rendered, "Canonical commands:") {
-		t.Fatalf("expected root help to list canonical commands, got %q", rendered)
+	if !strings.Contains(rendered, "Commands:") {
+		t.Fatalf("expected root help to list commands, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "planmark <command> [flags]") {
 		t.Fatalf("expected root help to mention planmark usage, got %q", rendered)
@@ -116,6 +116,9 @@ func TestRootHelpReturnsZeroAndShowsCommandGroups(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "update          Check for and install the latest released PlanMark build") {
 		t.Fatalf("expected root help to mention update command, got %q", rendered)
+	}
+	if strings.Contains(rendered, "\n  ai ") {
+		t.Fatalf("expected root help to omit removed ai command, got %q", rendered)
 	}
 }
 

@@ -40,10 +40,9 @@ Non-negotiables:
 Core command groups:
 - Compile/validate: `compile`, `doctor`, `changes`
 - Context/retrieval: `context`, `open`, `explain`, `pack`, `query`
-- Sync/reconcile: `sync [beads|github|linear]`
+- Sync/reconcile: `sync [beads|linear]`
 - Replanning: `propose-change`, `apply-change`
 - Metadata/introspection: `version`, `id`
-- Non-canonical AI helpers: `ai ...`
 
 Machine behavior expectations:
 - stable JSON envelopes for `--format json`
@@ -65,19 +64,23 @@ Use this order at session start:
 
 This flow keeps context minimal while preserving deterministic traceability back to `PLAN.md`.
 
-## Context budget policy (L0 -> L1 -> L2 -> PLAN)
+## Context budget policy (Need-Based)
 
-Use progressive disclosure by default:
-1. Start each bead at `L0`:
-   - `plan context <id> --plan PLAN.md --level L0 --format json`
-2. Escalate to `L1` only for pin-backed evidence:
-   - `plan context <id> --plan PLAN.md --level L1 --format json`
-3. Escalate to `L2` only for dependency-closure reasoning:
-   - `plan context <id> --plan PLAN.md --level L2 --format json`
-4. Use `plan open` / `plan explain` for targeted page faults before escalating further.
-5. Read full `PLAN.md` only when required by unresolved ambiguity or contract-level work.
+Use need-based retrieval by default:
+1. Start each bead with implicit `auto`:
+   - `plan context <id> --plan PLAN.md --format json`
+2. Use explicit needs when the operation is clear:
+   - `plan context <id> --plan PLAN.md --need execute --format json`
+   - `plan context <id> --plan PLAN.md --need edit --format json`
+   - `plan context <id> --plan PLAN.md --need dependency-check --format json`
+   - `plan context <id> --plan PLAN.md --need handoff --format json`
+3. Use `plan open` / `plan explain` for targeted page faults before asking for richer context.
+4. Read full `PLAN.md` only when required by unresolved ambiguity or contract-level work.
+
+Legacy compatibility:
+- `plan context --level L0|L1|L2` remains available during migration, but `--need` is the primary interface.
 
 Escalation trigger rule:
-- Include a one-line escalation reason in agent updates, e.g.:
-  - `Escalating L0 -> L1: missing pin evidence for parser range.`
-  - `Escalating L1 -> L2: unresolved dep interaction across closure.`
+- Include a one-line reason in agent updates, e.g.:
+  - `Escalating to file-backed context: acceptance references docs/specs/context-selection-v0.1.md.`
+  - `Escalating to dependency-check: declared deps require graph reasoning.`

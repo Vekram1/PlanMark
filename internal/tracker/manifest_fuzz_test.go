@@ -38,25 +38,6 @@ func FuzzBeadsBuildSyncManifestDeterminism(f *testing.F) {
 	})
 }
 
-func FuzzGitHubBuildSyncManifestDeterminism(f *testing.F) {
-	f.Add([]byte("task.a|remote.a|hash.a|PLAN.md|1|2|source.a|compile.a|runtime.a\n"))
-	f.Add([]byte(""))
-
-	f.Fuzz(func(t *testing.T, raw []byte) {
-		adapterA := NewGitHubAdapter()
-		adapterB := NewGitHubAdapter()
-		manifest := parseGenericManifest(raw)
-		adapterA.SeedFromSyncManifest(manifest)
-		adapterB.SeedFromSyncManifest(manifest)
-
-		first := adapterA.BuildSyncManifest()
-		second := adapterB.BuildSyncManifest()
-		if !reflect.DeepEqual(first, second) {
-			t.Fatalf("nondeterministic github sync manifest")
-		}
-	})
-}
-
 func FuzzLinearBuildSyncManifestDeterminism(f *testing.F) {
 	f.Add([]byte("task.a|remote.a|hash.a|PLAN.md|1|2|source.a|compile.a|runtime.a\n"))
 	f.Add([]byte(""))

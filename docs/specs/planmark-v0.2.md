@@ -247,38 +247,6 @@ Notes:
   - `2`: usage/flag error
   - `3`: internal error
 
-## AI Helper Boundary (Non-Canonical)
-
-- `plan ai ...` commands are assistive and non-canonical.
-- Canonical commands (`compile`, `doctor`, `context`, `open`, `explain`, `sync`) must remain deterministic and offline-safe.
-- `plan ai suggest-fix` may derive prompt/repair proposals from deterministic diagnostics, but it must not mutate `PLAN.md` implicitly.
-- Any apply flow (`plan ai apply-fix`) must require explicit approval, emit a reviewable delta/patch proposal, and be re-validated via deterministic commands.
-- If a command only previews a fix proposal, output must explicitly state that `PLAN.md` was not mutated.
-
-### AI Provider Config Contract (`.planmark.yaml`)
-
-AI provider selection is repository-local configuration and applies only to `plan ai ...` commands.
-
-Supported mapping:
-
-```yaml
-ai:
-  provider: openai_compatible
-  model: gpt-4o-mini
-  base_url: http://127.0.0.1:8080/v1
-  api_key_env: PLANMARK_AI_KEY
-  timeout_seconds: 30
-```
-
-Rules:
-- Unknown keys under `ai:` are rejected deterministically.
-- AI config values contribute to effective config hashing for reproducibility diagnostics.
-- Canonical commands remain unaffected by AI provider configuration.
-- Provider selection precedence for `plan ai apply-fix`:
-  1. explicit CLI flags
-  2. `.planmark.yaml` `ai:` values
-  3. built-in defaults (no provider configured => local proposal-only behavior)
-
 ### Tracker Sync Config Contract (`.planmark.yaml`)
 
 Tracker adapter and render-profile selection are repository-local configuration.
@@ -287,7 +255,7 @@ Supported mapping:
 
 ```yaml
 tracker:
-  adapter: beads  # or: github, linear
+  adapter: beads  # or: linear
   profile: default
 ```
 
@@ -296,7 +264,7 @@ Rules:
 - Tracker config values contribute to effective config hashing for reproducibility diagnostics.
 - Selection precedence for `plan sync`:
   1. explicit CLI flags (`--adapter`, `--profile`)
-  2. positional sync target (`plan sync beads`, `plan sync github`, `plan sync linear`)
+  2. positional sync target (`plan sync beads`, `plan sync linear`)
   3. `.planmark.yaml` `tracker:` values
   4. built-in defaults (`adapter=beads`, adapter default render profile)
 - Explicit CLI adapter selection must not conflict with an explicit positional target.
