@@ -1,39 +1,151 @@
-<img width="200" height="200" alt="PlanMark project task overview logo" src="https://github.com/user-attachments/assets/d4be234d-4c58-47cd-a29b-7951fefe5ed2" />
-# PlanMark
-![planmark-demo](https://github.com/user-attachments/assets/64f7eac6-20f3-4a16-8c0b-794610a0cf95)
+<h1 align="center">
+  <br>
+  <img width="200" height="200" alt="PlanMark project task overview logo" src="https://github.com/user-attachments/assets/d4be234d-4c58-47cd-a29b-7951fefe5ed2" />
+  <br>
+  PlanMark
+</h1>
 
-PlanMark turns a `PLAN.md` file into deterministic, machine-usable planning artifacts.
+<h4 align="center">A deterministic compiler from <code>PLAN.md</code> to structured task context, diagnostics, and tracker sync.</h4>
 
-Use it when you want:
-- `PLAN.md` to stay canonical
-- agents to consume structured task context instead of scraping prose
-- tracker sync to be a projection of the plan, not the source of truth
-- deterministic compile, diagnostics, and handoff outputs
+<div align="center">
 
-## What It Does
+[![License: MIT](https://img.shields.io/badge/License-MIT-lightblue.svg)](./LICENSE)
+![Go](https://img.shields.io/badge/language-Go-00ADD8.svg)
+![Deterministic](https://img.shields.io/badge/design-deterministic-222222.svg)
 
-PlanMark keeps ordinary Markdown as the authoring surface and derives structured outputs from it.
+</div>
 
-The core workflow is:
-1. write `PLAN.md`
-2. compile it into deterministic IR
-3. check readiness and blockers
-4. fetch task context or handoff packets for agents
-5. optionally sync projected tasks into a tracker
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/64f7eac6-20f3-4a16-8c0b-794610a0cf95" alt="PlanMark demo" width="900">
+</p>
 
-You do not need a separate DSL. PlanMark uses normal Markdown plus a small amount of task metadata such as `@id`, `@horizon`, `@deps`, and `@accept`.
+<p align="center">
+  <a href="#why-this-project-exists">Why This Project Exists</a> •
+  <a href="#tldr">TL;DR</a> •
+  <a href="#quick-example">Quick Example</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#first-demo">First Demo</a> •
+  <a href="#core-commands">Core Commands</a>
+</p>
 
-## Install
+---
 
-Build from a local checkout:
+<a id="why-this-project-exists"></a>
+## Why This Project Exists
+
+Most planning systems drift.
+
+The plan starts as a Markdown file, but the real work gradually moves into issue trackers, chat threads, and ad hoc agent prompts. At that point:
+- the tracker becomes the source of truth
+- agents scrape prose instead of consuming structure
+- provenance is lost
+- small edits create confusion about what actually changed
+
+PlanMark keeps `PLAN.md` canonical.
+
+It treats the plan as a source document, compiles it into deterministic machine-usable artifacts, and projects those artifacts into context packets, diagnostics, and trackers without making the tracker canonical.
+
+The core model is:
+
+```text
+PLAN.md -> canonical IR -> context / diagnostics / tracker projection
+```
+
+---
+
+<a id="tldr"></a>
+## TL;DR
+
+### The Problem
+
+You want to plan real work in Markdown, but:
+- raw Markdown is awkward for agents to consume safely
+- trackers drift from the source plan
+- dependencies and readiness become implicit
+- every tool wants to become the source of truth
+
+### The Solution
+
+PlanMark compiles `PLAN.md` into deterministic outputs:
+- canonical IR
+- task context packets with exact provenance
+- readiness and diagnostic output
+- tracker projections for systems like Beads
+- dependency-aware triage through `bv`
+
+### Why PlanMark
+
+- `PLAN.md` stays canonical
+- agents consume structured task context instead of scraping prose
+- tracker sync is a projection of the plan, not a replacement for it
+- compile, diagnostics, context, and handoff flows are deterministic and offline-safe
+
+---
+
+<a id="quick-example"></a>
+## Quick Example
+
+```md
+# PLAN
+
+## Stabilize parser
+- [ ] Add parser acceptance coverage
+  @id parser.acceptance
+  @horizon now
+  @accept cmd:go test ./internal/compile -run TestCompile
+
+## Ship tracker sync
+- [ ] Project tasks into Beads
+  @id tracker.sync
+  @horizon next
+  @deps parser.acceptance
+  @accept cmd:go test ./internal/cli -run TestSyncBeadsWritesManifest
+```
+
+Compile it:
 
 ```bash
+planmark compile --plan PLAN.md --out .planmark/tmp/plan.json
+```
+
+Get task-local context:
+
+```bash
+planmark context tracker.sync --plan PLAN.md --level L0 --format json
+```
+
+Project it into a tracker:
+
+```bash
+planmark sync beads --plan PLAN.md --format json
+```
+
+Run dependency-aware triage:
+
+```bash
+bv --robot-triage
+```
+
+That loop is the whole point: the plan stays canonical, but the rest of the workflow becomes machine-usable.
+
+---
+
+<a id="installation"></a>
+## Installation
+
+### Build from source
+
+```bash
+git clone https://github.com/Vekram1/PlanMark.git
+cd PlanMark
 go build -o ./bin/planmark ./cmd/planmark
 export PATH="$PWD/bin:$PATH"
 planmark version --format json
 ```
 
-Install with the project script on macOS or Linux:
+### Install with the project script
+
+macOS or Linux:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.sh | bash
@@ -48,14 +160,16 @@ export PATH="$HOME/.local/bin:$PATH"
 
 The installer places `planmark` on your path and also installs `plan` as a compatibility alias by default.
 
-Check for newer releases or update in place on macOS/Linux:
+### Update in place
+
+macOS or Linux:
 
 ```bash
 planmark update --check
 planmark update
 ```
 
-Install on Windows with PowerShell:
+Windows PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/Vekram1/PlanMark/master/scripts/install.ps1 | iex"
@@ -63,11 +177,13 @@ planmark version --format json
 ```
 
 Windows release assets are published as `.zip` archives. The PowerShell installer installs `planmark.exe` and `plan.exe` under `%LOCALAPPDATA%\Programs\PlanMark\bin` by default.
-To update on Windows, rerun the PowerShell installer.
 
-## First 10 Minutes
+---
 
-Initialize the repo:
+<a id="first-demo"></a>
+## First Demo
+
+Initialize a repo:
 
 ```bash
 planmark init --dir . --format text
@@ -81,7 +197,7 @@ Compile the initial plan:
 planmark compile --plan PLAN.md --out .planmark/tmp/plan.json
 ```
 
-Check the plan for readiness issues:
+Check readiness:
 
 ```bash
 planmark doctor --plan PLAN.md --profile loose --format rich
@@ -95,13 +211,21 @@ planmark query --plan PLAN.md --format text
 
 If those commands work, the repo is ready for agent-facing task context.
 
-## Your First `PLAN.md`
+---
 
-A small, realistic example:
+## What PlanMark Understands
+
+PlanMark keeps ordinary Markdown as the authoring surface and derives structure from it.
+
+You do not need a separate DSL. Normal Markdown works, with a small amount of task metadata such as:
+- `@id`
+- `@horizon`
+- `@deps`
+- `@accept`
+
+Heading tasks work well when you want rationale, risks, or checklists under the task:
 
 ```md
-# PLAN
-
 ## API rollout
 
 ### Add migration
@@ -109,22 +233,15 @@ A small, realistic example:
 @horizon now
 @deps api.schema
 @accept cmd:go test ./...
-@rollback restore snapshot and revert migration file
 
 We need an additive rollout because older workers may still read legacy columns.
 
 - [ ] Write additive migration
 - [ ] Verify rollback path
 - [ ] Run local validation
-
-### Validate schema assumptions
-@id api.schema
-@horizon next
-
-Confirm the new columns are additive and safe for older readers.
 ```
 
-A compact checkbox task style also works:
+Compact checkbox tasks also work:
 
 ```md
 - [ ] Add migration
@@ -134,9 +251,12 @@ A compact checkbox task style also works:
   @accept cmd:go test ./...
 ```
 
-Use heading tasks when you want rationale, examples, risk notes, or a scoped execution checklist under the task. A bare heading without task metadata is just document structure.
+Use heading tasks when you want nearby context. Use compact tasks when the work item is already small and self-contained.
 
-## Commands New Users Actually Need
+---
+
+<a id="core-commands"></a>
+## Core Commands
 
 Compile to deterministic IR:
 
@@ -189,6 +309,8 @@ How to choose context in practice:
 - Treat richer context as an escalation, not the starting point.
 - Legacy `--level L0|L1|L2` remains compatibility-only and should not be the primary path.
 
+---
+
 ## Tracker Sync
 
 Trackers are projection layers. `PLAN.md` remains canonical.
@@ -225,6 +347,8 @@ tracker:
   profile: default
 ```
 
+---
+
 ## Canonical vs Non-Canonical
 
 Canonical deterministic commands:
@@ -243,7 +367,9 @@ Optional assistive commands live under:
 
 Use AI helpers as drafting support, not as the source of truth.
 
-## Writing Plans That Work Well For Agents
+---
+
+## Writing Plans That Work Well
 
 Good PlanMark plans usually have these traits:
 - important tasks have explicit `@id` values
@@ -254,6 +380,8 @@ Good PlanMark plans usually have these traits:
 - tasks are bounded and specific instead of being a long flat checklist
 
 The goal is not to formalize everything. The goal is to make each task executable with enough nearby context to act safely.
+
+---
 
 ## Common Commands
 
@@ -271,6 +399,8 @@ planmark handoff <id|node-ref> --plan PLAN.md --format json
 planmark sync [beads|github|linear] --plan PLAN.md --dry-run --format json
 ```
 
+---
+
 ## Development
 
 Run the test suite:
@@ -278,3 +408,9 @@ Run the test suite:
 ```bash
 go test ./...
 ```
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE).

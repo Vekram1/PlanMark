@@ -286,7 +286,7 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 					Diagnostic: "projection unchanged",
 				}, nil
 			}
-			if err := a.closeIssue(remoteID, doneCloseReason(task.ID)); err != nil {
+			if err := a.closeIssueForCanonicalDone(remoteID, task.ID); err != nil {
 				return PushResult{}, err
 			}
 			a.projectionHashByID[task.ID] = currentHash
@@ -340,7 +340,7 @@ func (a *BeadsAdapter) PushTask(_ context.Context, task TaskProjection) (PushRes
 		remoteID = issue.ID
 	}
 	if shouldBeClosed(task) {
-		if err := a.closeIssue(remoteID, doneCloseReason(task.ID)); err != nil && !isBeadsNothingToDo(err) {
+		if err := a.closeIssueForCanonicalDone(remoteID, task.ID); err != nil {
 			return PushResult{}, err
 		}
 	}
@@ -471,20 +471,7 @@ func (a *BeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string
 			Diagnostic: "tracker issue already absent for stale task",
 		}, nil
 	}
-	currentDeps, err := a.listDependencies(remoteID)
-	if err != nil {
-		return PushResult{}, err
-	}
-	for _, dep := range currentDeps {
-		depID := strings.TrimSpace(dep.DependsOnID)
-		if depID == "" || depID == remoteID {
-			continue
-		}
-		if err := a.removeDependency(remoteID, depID); err != nil {
-			return PushResult{}, err
-		}
-	}
-	if err := a.closeIssue(remoteID, staleCloseReason(reason)); err != nil {
+	if err := a.closeIssueAfterRemovingDependencies(remoteID, staleCloseReason(reason)); err != nil {
 		if isBeadsIssueNotFound(err) || isBeadsNothingToDo(err) {
 			a.deleteTaskState(id)
 			return PushResult{
@@ -502,6 +489,30 @@ func (a *BeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string
 		Mutated:    true,
 		Diagnostic: "tracker issue closed for stale task",
 	}, nil
+}
+
+func (a *BeadsAdapter) closeIssueForCanonicalDone(remoteID string, taskID string) error {
+	if err := a.closeIssueAfterRemovingDependencies(remoteID, doneCloseReason(taskID)); err != nil && !isBeadsNothingToDo(err) {
+		return err
+	}
+	return nil
+}
+
+func (a *BeadsAdapter) closeIssueAfterRemovingDependencies(remoteID string, reason string) error {
+	currentDeps, err := a.listDependencies(remoteID)
+	if err != nil {
+		return err
+	}
+	for _, dep := range currentDeps {
+		depID := strings.TrimSpace(dep.DependsOnID)
+		if depID == "" || depID == remoteID {
+			continue
+		}
+		if err := a.removeDependency(remoteID, depID); err != nil {
+			return err
+		}
+	}
+	return a.closeIssue(remoteID, reason)
 }
 
 func (a *BeadsAdapter) createIssue(title string, description string, acceptance string, priority int) (beadsIssue, error) {
