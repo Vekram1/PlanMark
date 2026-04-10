@@ -394,7 +394,12 @@ func TestBeadsPushClosesCanonicallyDoneIssueWithUnchangedProjection(t *testing.T
 func TestBeadsMarkTaskStaleTreatsAlreadyClosedIssueAsNoop(t *testing.T) {
 	restore := runBrCommand
 	defer func() { runBrCommand = restore }()
+	var seen [][]string
 	runBrCommand = func(args ...string) ([]byte, error) {
+		seen = append(seen, append([]string(nil), args...))
+		if len(args) >= 2 && args[0] == "dep" && args[1] == "list" {
+			return []byte(`[]`), nil
+		}
 		if len(args) >= 1 && args[0] == "close" {
 			return nil, errors.New(`exit status 3: []
 {
@@ -425,6 +430,9 @@ func TestBeadsMarkTaskStaleTreatsAlreadyClosedIssueAsNoop(t *testing.T) {
 	}
 	if _, ok := adapter.remoteIDByID["fixture.task.stale"]; ok {
 		t.Fatalf("expected stale task state to be dropped after noop close")
+	}
+	if len(seen) != 2 || seen[0][0] != "dep" || seen[0][1] != "list" || seen[1][0] != "close" {
+		t.Fatalf("expected dep list -> close flow, got %#v", seen)
 	}
 }
 
@@ -700,8 +708,8 @@ func TestBeadsPushCreatesRealIssueAndStoresRemoteID(t *testing.T) {
 
 	adapter := NewBeadsAdapter()
 	task := TaskProjection{
-		ID:    "fixture.task.create",
-		Title: "Create issue",
+		ID:      "fixture.task.create",
+		Title:   "Create issue",
 		Horizon: "now",
 		Provenance: TaskProvenance{
 			Path:       "testdata/plans/mixed.md",
@@ -874,12 +882,62 @@ func TestBeadsSyncDependenciesResolvesDependencyRemoteIDByExternalRef(t *testing
 			Title:        "Root",
 			Dependencies: []string{"fixture.task.dep"},
 		},
+		"fixture.task.dep": {
+			ID:    "fixture.task.dep",
+			Title: "Dep",
+		},
 	})
 	if err != nil {
 		t.Fatalf("sync dependencies: %v", err)
 	}
 	if adapter.remoteIDByID["fixture.task.dep"] != "bead-dep" {
 		t.Fatalf("expected dependency remote id to be cached, got %#v", adapter.remoteIDByID)
+	}
+}
+
+func TestBeadsSyncDependenciesIgnoresMissingPlanDepsAndRemovesStaleEdges(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	seen := make([][]string, 0, 8)
+	runBrCommand = func(args ...string) ([]byte, error) {
+		seen = append(seen, append([]string(nil), args...))
+		switch {
+		case reflect.DeepEqual(args, []string{"dep", "list", "bead-root", "--json"}):
+			return []byte(`[
+				{"issue_id":"bead-root","depends_on_id":"bead-missing","type":"blocks"}
+			]`), nil
+		case reflect.DeepEqual(args, []string{"dep", "remove", "bead-root", "bead-missing", "--json"}):
+			return []byte(`{"ok":true}`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+			return nil, nil
+		}
+	}
+
+	adapter := NewBeadsAdapter()
+	adapter.remoteIDByID["fixture.task.root"] = "bead-root"
+
+	err := adapter.SyncDependencies(context.Background(), map[string]TaskProjection{
+		"fixture.task.root": {
+			ID:           "fixture.task.root",
+			Title:        "Root",
+			Dependencies: []string{"fixture.task.missing"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("sync dependencies: %v", err)
+	}
+
+	wantCommands := [][]string{
+		{"dep", "list", "bead-root", "--json"},
+		{"dep", "remove", "bead-root", "bead-missing", "--json"},
+	}
+	if !reflect.DeepEqual(seen, wantCommands) {
+		t.Fatalf("unexpected dependency reconciliation commands\nwant=%#v\ngot=%#v", wantCommands, seen)
+	}
+	if _, ok := adapter.remoteIDByID["fixture.task.missing"]; ok {
+		t.Fatalf("expected missing plan dependency to avoid tracker identity lookup, got %#v", adapter.remoteIDByID)
 	}
 }
 
@@ -1189,6 +1247,12 @@ func TestBeadsMarkTaskStaleClosesIssueAndDropsState(t *testing.T) {
 	runBrCommand = func(args ...string) ([]byte, error) {
 		seen = append(seen, append([]string(nil), args...))
 		switch args[0] {
+		case "dep":
+			if len(args) >= 2 && args[1] == "list" {
+				return []byte(`[]`), nil
+			}
+			t.Fatalf("unexpected dep command: %#v", args)
+			return nil, nil
 		case "close":
 			return []byte(`[{"id":"bd-2qn","status":"closed"}]`), nil
 		default:
@@ -1222,14 +1286,71 @@ func TestBeadsMarkTaskStaleClosesIssueAndDropsState(t *testing.T) {
 	if !result.Mutated || result.RemoteID != "bd-2qn" {
 		t.Fatalf("expected stale close mutation, got %#v", result)
 	}
-	if len(seen) != 1 || seen[0][0] != "close" || seen[0][1] != "bd-2qn" {
-		t.Fatalf("expected close call for bd-2qn, got %#v", seen)
+	if len(seen) != 2 || seen[0][0] != "dep" || seen[0][1] != "list" || seen[1][0] != "close" || seen[1][1] != "bd-2qn" {
+		t.Fatalf("expected dep list -> close call for bd-2qn, got %#v", seen)
 	}
-	if !slices.Contains(seen[0], "--reason") {
-		t.Fatalf("expected close reason in command args, got %#v", seen[0])
+	if !slices.Contains(seen[1], "--reason") {
+		t.Fatalf("expected close reason in command args, got %#v", seen[1])
 	}
 	if len(adapter.BuildSyncManifest().Entries) != 0 {
 		t.Fatalf("expected closed stale task to be removed from manifest state, got %#v", adapter.BuildSyncManifest().Entries)
+	}
+}
+
+func TestBeadsMarkTaskStaleRemovesDependenciesBeforeClose(t *testing.T) {
+	restore := runBrCommand
+	defer func() { runBrCommand = restore }()
+
+	var seen [][]string
+	runBrCommand = func(args ...string) ([]byte, error) {
+		seen = append(seen, append([]string(nil), args...))
+		switch args[0] {
+		case "dep":
+			switch args[1] {
+			case "list":
+				return []byte(`[{"issue_id":"bd-2qn","depends_on_id":"bd-dep","type":"blocks"}]`), nil
+			case "remove":
+				return []byte(`[]`), nil
+			default:
+				t.Fatalf("unexpected dep subcommand: %#v", args)
+			}
+		case "close":
+			return []byte(`[{"id":"bd-2qn","status":"closed"}]`), nil
+		default:
+			t.Fatalf("unexpected br command: %#v", args)
+		}
+		return nil, nil
+	}
+
+	adapter := NewBeadsAdapter()
+	adapter.SeedFromSyncManifest(SyncManifest{
+		SchemaVersion: SyncManifestSchemaVersionV01,
+		Entries: []SyncManifestEntry{
+			{
+				ID:       "fixture.task.dep-close",
+				RemoteID: "bd-2qn",
+			},
+		},
+	})
+
+	result, err := adapter.MarkTaskStale(context.Background(), "fixture.task.dep-close", "present in prior projection set but missing in desired")
+	if err != nil {
+		t.Fatalf("mark task stale: %v", err)
+	}
+	if !result.Mutated || result.RemoteID != "bd-2qn" {
+		t.Fatalf("expected stale close mutation, got %#v", result)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected dep list + dep remove + close flow, got %#v", seen)
+	}
+	if seen[0][0] != "dep" || seen[0][1] != "list" || seen[0][2] != "bd-2qn" {
+		t.Fatalf("expected first call to list dependencies, got %#v", seen[0])
+	}
+	if seen[1][0] != "dep" || seen[1][1] != "remove" || seen[1][2] != "bd-2qn" || seen[1][3] != "bd-dep" {
+		t.Fatalf("expected second call to remove dependency, got %#v", seen[1])
+	}
+	if seen[2][0] != "close" || seen[2][1] != "bd-2qn" {
+		t.Fatalf("expected final close call, got %#v", seen[2])
 	}
 }
 
@@ -1252,7 +1373,8 @@ func TestBeadsAdapterUsesExplicitDBPath(t *testing.T) {
 	}
 
 	adapter := NewBeadsAdapter()
-	adapter.SetDBPath(filepath.Join(t.TempDir(), ".beads", "beads.db"))
+	beadsDir := filepath.Join(t.TempDir(), ".beads")
+	adapter.SetDBPath(filepath.Join(beadsDir, "beads.db"))
 	task := TaskProjection{
 		ID:    "fixture.task.create",
 		Title: "Create issue",
@@ -1274,6 +1396,21 @@ func TestBeadsAdapterUsesExplicitDBPath(t *testing.T) {
 		if len(args) < 3 || args[1] != "--db" {
 			t.Fatalf("expected explicit --db arg, got %#v", args)
 		}
+	}
+
+	metadataRaw, err := os.ReadFile(filepath.Join(beadsDir, "metadata.json"))
+	if err != nil {
+		t.Fatalf("read generated metadata.json: %v", err)
+	}
+	var metadata struct {
+		Database    string `json:"database"`
+		JSONLExport string `json:"jsonl_export"`
+	}
+	if err := json.Unmarshal(metadataRaw, &metadata); err != nil {
+		t.Fatalf("decode metadata.json: %v raw=%q", err, string(metadataRaw))
+	}
+	if metadata.Database != "beads.db" || metadata.JSONLExport != "issues.jsonl" {
+		t.Fatalf("unexpected generated metadata: %#v", metadata)
 	}
 }
 

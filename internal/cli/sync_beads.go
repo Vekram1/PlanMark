@@ -9,12 +9,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/vikramoddiraju/planmark/internal/compile"
 	"github.com/vikramoddiraju/planmark/internal/config"
+	"github.com/vikramoddiraju/planmark/internal/diag"
+	"github.com/vikramoddiraju/planmark/internal/doctor"
 	"github.com/vikramoddiraju/planmark/internal/journal"
 	"github.com/vikramoddiraju/planmark/internal/protocol"
 	"github.com/vikramoddiraju/planmark/internal/syncplanner"
@@ -95,15 +98,15 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	filteredArgs := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if strings.HasPrefix(arg, "--plan=") || strings.HasPrefix(arg, "--state-dir=") || strings.HasPrefix(arg, "--format=") || strings.HasPrefix(arg, "--adapter=") || strings.HasPrefix(arg, "--profile=") {
+		if syncArgHasAttachedValue(arg, "plan") || syncArgHasAttachedValue(arg, "state-dir") || syncArgHasAttachedValue(arg, "format") || syncArgHasAttachedValue(arg, "adapter") || syncArgHasAttachedValue(arg, "profile") {
 			filteredArgs = append(filteredArgs, arg)
 			continue
 		}
-		if strings.HasPrefix(arg, "--deletion-policy=") {
+		if syncArgHasAttachedValue(arg, "deletion-policy") {
 			filteredArgs = append(filteredArgs, arg)
 			continue
 		}
-		if arg == "--plan" || arg == "--state-dir" || arg == "--format" || arg == "--deletion-policy" || arg == "--adapter" || arg == "--profile" {
+		if syncArgExpectsValue(arg) {
 			filteredArgs = append(filteredArgs, arg)
 			if i+1 < len(args) {
 				i++
@@ -127,36 +130,48 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	planPath := fs.String("plan", "", "path to `plan-file` markdown file")
-	stateDir := fs.String("state-dir", ".planmark", "path to local PlanMark `state-dir`")
+	fs.SetOutput(ioutil.Discard)
+	planPath := fs.String("plan", "", "path to the plan markdown file")
+	stateDir := fs.String("state-dir", ".planmark", "path to the local PlanMark state directory")
 	adapterFlag := fs.String("adapter", "", "tracker adapter: beads|linear")
 	profileFlag := fs.String("profile", "", "render profile: default|compact|agentic|handoff")
 	deletionPolicy := fs.String("deletion-policy", string(syncplanner.DefaultDeletionPolicy()), "deletion policy for PLAN removals: mark-stale|close|detach|delete")
 	dryRun := fs.Bool("dry-run", false, "preview without writing sync manifest")
 	format := fs.String("format", "text", "output format: text|json")
+	fs.Usage = func() {
+		renderSyncUsage(stderr)
+	}
 	if err := fs.Parse(filteredArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			renderSyncUsage(stdout)
 			return protocol.ExitSuccess
 		}
 		fmt.Fprintln(stderr, err.Error())
+		fmt.Fprintln(stderr, "")
+		renderSyncUsage(stderr)
 		return protocol.ExitUsageError
 	}
 
 	remaining := fs.Args()
 	if len(remaining) > 1 {
-		fmt.Fprintln(stderr, "usage: plan sync [beads|linear] --plan <path> [--adapter beads|linear] [--profile default|compact|agentic|handoff] [--state-dir <path>] [--deletion-policy mark-stale|close|detach|delete] [--dry-run] [--format text|json]")
+		fmt.Fprintln(stderr, "too many positional arguments for sync")
+		fmt.Fprintln(stderr, "")
+		renderSyncUsage(stderr)
 		return protocol.ExitUsageError
 	}
 	if len(remaining) == 1 {
 		if target != "" {
 			fmt.Fprintln(stderr, "too many positional arguments for sync")
+			fmt.Fprintln(stderr, "")
+			renderSyncUsage(stderr)
 			return protocol.ExitUsageError
 		}
 		target = remaining[0]
 	}
 	if strings.TrimSpace(*planPath) == "" {
 		fmt.Fprintln(stderr, "missing --plan")
+		fmt.Fprintln(stderr, "")
+		renderSyncUsage(stderr)
 		return protocol.ExitUsageError
 	}
 	cfgResolved, err := config.LoadForPlan(*planPath)
@@ -184,6 +199,14 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "compile plan: %v\n", err)
 		return protocol.ExitInternalError
+	}
+	graphValidation := doctor.ValidateGraph(compiled)
+	for _, warning := range graphValidationWarnings(graphValidation.Diagnostics) {
+		fmt.Fprintf(stderr, "warning %s %s %s\n", warning.Code, formatDiagnosticSource(warning.Source), warning.Message)
+	}
+	if hasGraphValidationErrors(graphValidation.Diagnostics) {
+		fmt.Fprintln(stderr, doctor.FormatDiagnosticsText(graphValidation.Diagnostics))
+		return protocol.ExitValidationFailed
 	}
 	compileID, err := semanticCompileID(compiled)
 	if err != nil {
@@ -345,6 +368,7 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			return protocol.ExitInternalError
 		}
 		seenPriorKeys := make(map[string]struct{}, len(prior))
+		seenManifestRemoteIDsByID := make(map[string]map[string]struct{}, len(priorManifest.Entries))
 		for _, entry := range prior {
 			id := strings.TrimSpace(entry.ID)
 			if id == "" {
@@ -353,6 +377,17 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			key := id + "\x00" + strings.TrimSpace(entry.ProjectionHash) + "\x00" + strings.TrimSpace(entry.Provenance.NodeRef) + "\x00" + strings.TrimSpace(entry.Provenance.Path)
 			seenPriorKeys[key] = struct{}{}
 		}
+		for _, entry := range priorManifest.Entries {
+			id := strings.TrimSpace(entry.ID)
+			remoteID := strings.TrimSpace(entry.RemoteID)
+			if id == "" || remoteID == "" {
+				continue
+			}
+			if seenManifestRemoteIDsByID[id] == nil {
+				seenManifestRemoteIDsByID[id] = map[string]struct{}{}
+			}
+			seenManifestRemoteIDsByID[id][remoteID] = struct{}{}
+		}
 		for _, candidate := range staleCandidates {
 			id := strings.TrimSpace(candidate.ID)
 			if id == "" {
@@ -360,6 +395,11 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 			}
 			if _, alreadyDesired := desiredIDs[id]; alreadyDesired {
 				continue
+			}
+			if remoteIDs := seenManifestRemoteIDsByID[id]; remoteIDs != nil {
+				if _, alreadyManifested := remoteIDs[strings.TrimSpace(candidate.RemoteID)]; alreadyManifested {
+					continue
+				}
 			}
 			key := id + "\x00" + strings.TrimSpace(candidate.RemoteID) + "\x00" + strings.TrimSpace(candidate.ProjectionHash) + "\x00" + strings.TrimSpace(candidate.NodeRef) + "\x00" + strings.TrimSpace(candidate.SourcePath)
 			if _, alreadyPrior := seenPriorKeys[key]; alreadyPrior {
@@ -634,6 +674,45 @@ func runSync(args []string, stdout io.Writer, stderr io.Writer) int {
 	return protocol.ExitSuccess
 }
 
+func syncArgHasAttachedValue(arg string, name string) bool {
+	return strings.HasPrefix(arg, "-"+name+"=") || strings.HasPrefix(arg, "--"+name+"=")
+}
+
+func syncArgExpectsValue(arg string) bool {
+	switch arg {
+	case "-plan", "--plan", "-state-dir", "--state-dir", "-format", "--format", "-deletion-policy", "--deletion-policy", "-adapter", "--adapter", "-profile", "--profile":
+		return true
+	default:
+		return false
+	}
+}
+
+func renderSyncUsage(w io.Writer) {
+	lines := []string{
+		"Usage:",
+		"  plan sync [beads|linear] --plan <path> [flags]",
+		"",
+		"Flags:",
+		"  -adapter string",
+		"        tracker adapter: beads|linear",
+		"  -deletion-policy string",
+		"        deletion policy for PLAN removals: mark-stale|close|detach|delete (default \"mark-stale\")",
+		"  -dry-run",
+		"        preview without writing sync manifest",
+		"  -format string",
+		"        output format: text|json (default \"text\")",
+		"  -plan string",
+		"        path to the plan markdown file",
+		"  -profile string",
+		"        render profile: default|compact|agentic|handoff",
+		"  -state-dir string",
+		"        path to the local PlanMark state directory (default \".planmark\")",
+	}
+	for _, line := range lines {
+		fmt.Fprintln(w, line)
+	}
+}
+
 func semanticCompileID(compiled any) (string, error) {
 	payload, err := json.Marshal(compiled)
 	if err != nil {
@@ -641,6 +720,43 @@ func semanticCompileID(compiled any) (string, error) {
 	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func hasGraphValidationErrors(diagnostics []diag.Diagnostic) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity != diag.SeverityError {
+			continue
+		}
+		switch diagnostic.Code {
+		case diag.CodeDuplicateTaskID, diag.CodeDependencyCycle:
+			return true
+		}
+	}
+	return false
+}
+
+func graphValidationWarnings(diagnostics []diag.Diagnostic) []diag.Diagnostic {
+	out := make([]diag.Diagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == diag.CodeUnknownDependency {
+			out = append(out, diagnostic)
+		}
+	}
+	return out
+}
+
+func formatDiagnosticSource(source diag.SourceSpan) string {
+	path := strings.TrimSpace(source.Path)
+	if path == "" {
+		return "-"
+	}
+	if source.StartLine <= 0 {
+		return path
+	}
+	if source.EndLine > 0 && source.EndLine != source.StartLine {
+		return fmt.Sprintf("%s:%d-%d", path, source.StartLine, source.EndLine)
+	}
+	return fmt.Sprintf("%s:%d", path, source.StartLine)
 }
 
 func resolveSyncSelection(target string, adapterFlag string, profileFlag string, cfg config.Resolved) (string, string, error) {

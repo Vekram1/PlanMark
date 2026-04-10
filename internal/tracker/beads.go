@@ -386,6 +386,9 @@ func (a *BeadsAdapter) SyncDependencies(_ context.Context, tasks map[string]Task
 			if depID == "" || depID == taskID {
 				continue
 			}
+			if _, ok := tasks[depID]; !ok {
+				continue
+			}
 			depIssueID := strings.TrimSpace(a.remoteIDByID[depID])
 			if !isLikelyBeadsIssueID(depIssueID) {
 				existing, err := a.lookupIssueByExternalRef(depID)
@@ -467,6 +470,19 @@ func (a *BeadsAdapter) MarkTaskStale(_ context.Context, id string, reason string
 			Mutated:    false,
 			Diagnostic: "tracker issue already absent for stale task",
 		}, nil
+	}
+	currentDeps, err := a.listDependencies(remoteID)
+	if err != nil {
+		return PushResult{}, err
+	}
+	for _, dep := range currentDeps {
+		depID := strings.TrimSpace(dep.DependsOnID)
+		if depID == "" || depID == remoteID {
+			continue
+		}
+		if err := a.removeDependency(remoteID, depID); err != nil {
+			return PushResult{}, err
+		}
 	}
 	if err := a.closeIssue(remoteID, staleCloseReason(reason)); err != nil {
 		if isBeadsIssueNotFound(err) || isBeadsNothingToDo(err) {
@@ -725,13 +741,46 @@ func (a *BeadsAdapter) runBr(args ...string) ([]byte, error) {
 	if strings.TrimSpace(a.dbPath) == "" {
 		return runBrCommand(args...)
 	}
-	if err := os.MkdirAll(filepath.Dir(a.dbPath), 0o755); err != nil {
+	dbDir := filepath.Dir(a.dbPath)
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		return nil, fmt.Errorf("prepare beads db dir: %w", err)
+	}
+	if err := ensureBeadsWorkspaceMetadata(dbDir, filepath.Base(a.dbPath)); err != nil {
+		return nil, err
 	}
 	withDB := make([]string, 0, len(args)+2)
 	withDB = append(withDB, args[0], "--db", a.dbPath)
 	withDB = append(withDB, args[1:]...)
 	return runBrCommand(withDB...)
+}
+
+func ensureBeadsWorkspaceMetadata(beadsDir string, dbFile string) error {
+	metadataPath := filepath.Join(beadsDir, "metadata.json")
+	if _, err := os.Stat(metadataPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat beads metadata: %w", err)
+	}
+
+	payload := struct {
+		Database    string `json:"database"`
+		JSONLExport string `json:"jsonl_export"`
+	}{
+		Database:    strings.TrimSpace(dbFile),
+		JSONLExport: "issues.jsonl",
+	}
+	if payload.Database == "" {
+		payload.Database = "beads.db"
+	}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal beads metadata: %w", err)
+	}
+	raw = append(raw, '\n')
+	if err := fsio.WriteFileAtomic(metadataPath, raw, 0o644); err != nil {
+		return fmt.Errorf("write beads metadata: %w", err)
+	}
+	return nil
 }
 
 func (a *BeadsAdapter) deleteTaskState(id string) {
