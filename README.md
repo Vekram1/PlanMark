@@ -1,3 +1,4 @@
+![planmark-demo](https://github.com/user-attachments/assets/64f7eac6-20f3-4a16-8c0b-794610a0cf95)
 # PlanMark
 
 PlanMark turns a `PLAN.md` file into deterministic, machine-usable planning artifacts.
