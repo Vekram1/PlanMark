@@ -15,6 +15,7 @@
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/64f7eac6-20f3-4a16-8c0b-794610a0cf95" alt="PlanMark demo" width="900">
+  <img width="1624" height="1061" alt="Screenshot 2026-04-11 at 1 24 20 AM" src="https://github.com/user-attachments/assets/abd5352a-c6ce-43a6-ac58-67681a14cacb" />
 </p>
 
 <p align="center">
