@@ -97,7 +97,7 @@ These classes are implementation details. They are not the primary agent-facing 
 
 ## Contract Rule
 
-`L0`, `L1`, and `L2` remain valid implementation concepts for caching, packet builders, and compatibility paths, but they are no longer the primary public interface for context selection.
+`L0`, `L1`, and `L2` remain valid implementation concepts for caching and packet builders, but they are no longer part of the public `plan context` CLI contract.
 
 The public contract is:
 
@@ -355,7 +355,7 @@ The evaluation goal is not "smallest possible packet at all costs". The goal is 
 
 ### Small Evaluation Protocol
 
-During migration away from legacy public levels, compare need-based retrieval against legacy level-based retrieval on repeated agent tasks:
+Compare need-based retrieval against the older level-based model on repeated agent tasks:
 
 - `execute`
   - should stay task-local on the common path
@@ -390,13 +390,12 @@ The command must remain machine-actionable and stable under protocol versioning 
 
 PlanMark may keep compatibility support for:
 
-- `plan context --level L0|L1|L2`
 - internal cache keys keyed by retrieval class or legacy level
 - pack/export flows that still refer to levels during transition
 
 However:
 
-- legacy levels are compatibility paths
+- legacy levels are internal implementation concepts
 - new behavior should prefer `--need`
 - new docs should describe `--need` as primary
 
@@ -452,7 +451,7 @@ For v0.1, the context-selection system does not attempt to do the following:
 
 1. Add the spec and make the contract explicit.
 2. Add a need-based selector that chooses an internal retrieval class deterministically.
-3. Add `plan context --need ...` while keeping `--level` as a compatibility path.
+3. Add `plan context --need ...` and stop exposing raw levels in the public CLI.
 4. Return machine-readable selection metadata in JSON output.
 5. Move pack/export and related context consumers toward the same need-based model.
 6. Deprecate public documentation centered on `L0`, `L1`, and `L2`.

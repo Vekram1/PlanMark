@@ -21,7 +21,7 @@ func TestRunDispatchesContextOpenAndExplain(t *testing.T) {
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	exit := Run([]string{"context", "--plan", planPath, "fixture.task.now", "--level", "L0"}, &out, &errOut)
+	exit := Run([]string{"context", "--plan", planPath, "fixture.task.now", "--need", "execute"}, &out, &errOut)
 	if exit != protocol.ExitSuccess {
 		t.Fatalf("expected context exit success, got %d stderr=%q", exit, errOut.String())
 	}
@@ -51,7 +51,7 @@ func TestContextJSONUsesProtocolEnvelope(t *testing.T) {
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	exit := Run([]string{"context", "--plan", planPath, "--format", "json", "fixture.task.now", "--level", "L0"}, &out, &errOut)
+	exit := Run([]string{"context", "--plan", planPath, "--format", "json", "fixture.task.now", "--need", "execute"}, &out, &errOut)
 	if exit != protocol.ExitSuccess {
 		t.Fatalf("expected context exit success, got %d stderr=%q", exit, errOut.String())
 	}
@@ -74,7 +74,7 @@ func TestContextJSONUsesProtocolEnvelope(t *testing.T) {
 	}
 }
 
-func TestContextL2JSONIncludesClosure(t *testing.T) {
+func TestContextDependencyCheckJSONIncludesClosure(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	planBody := strings.Join([]string{
@@ -93,7 +93,7 @@ func TestContextL2JSONIncludesClosure(t *testing.T) {
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	exit := Run([]string{"context", "--plan", planPath, "--format", "json", "fixture.task.root", "--level", "L2"}, &out, &errOut)
+	exit := Run([]string{"context", "--plan", planPath, "--format", "json", "fixture.task.root", "--need", "dependency-check"}, &out, &errOut)
 	if exit != protocol.ExitSuccess {
 		t.Fatalf("expected context exit success, got %d stderr=%q", exit, errOut.String())
 	}
@@ -245,7 +245,7 @@ func TestContextNeedTextIncludesFallbackAndQueryFields(t *testing.T) {
 	}
 }
 
-func TestContextDefaultsToNeedAutoWhenNoNeedOrLevelProvided(t *testing.T) {
+func TestContextDefaultsToNeedAutoWhenNoNeedProvided(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	targetDir := filepath.Join(tmp, "internal", "cli")
@@ -285,7 +285,7 @@ func TestContextDefaultsToNeedAutoWhenNoNeedOrLevelProvided(t *testing.T) {
 	}
 }
 
-func TestContextRejectsNeedAndNonDefaultLevelTogether(t *testing.T) {
+func TestContextRejectsDeprecatedLevelFlag(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	planBody := "- [ ] Task now\n  @id fixture.task.now\n  @horizon now\n  @accept cmd:go test ./...\n"
@@ -295,31 +295,12 @@ func TestContextRejectsNeedAndNonDefaultLevelTogether(t *testing.T) {
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	exit := Run([]string{"context", "--plan", planPath, "--need", "execute", "--level", "L2", "fixture.task.now"}, &out, &errOut)
+	exit := Run([]string{"context", "--plan", planPath, "--level", "L2", "fixture.task.now"}, &out, &errOut)
 	if exit != protocol.ExitUsageError {
 		t.Fatalf("expected usage error, got %d stderr=%q", exit, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "--need and --level may not be combined") {
-		t.Fatalf("expected explicit need/level conflict message, got %q", errOut.String())
-	}
-}
-
-func TestContextRejectsNeedAndExplicitLevelL0Together(t *testing.T) {
-	tmp := t.TempDir()
-	planPath := filepath.Join(tmp, "PLAN.md")
-	planBody := "- [ ] Task now\n  @id fixture.task.now\n  @horizon now\n  @accept cmd:go test ./...\n"
-	if err := os.WriteFile(planPath, []byte(planBody), 0o644); err != nil {
-		t.Fatalf("write plan fixture: %v", err)
-	}
-
-	var out bytes.Buffer
-	var errOut bytes.Buffer
-	exit := Run([]string{"context", "--plan", planPath, "--need", "execute", "--level", "L0", "fixture.task.now"}, &out, &errOut)
-	if exit != protocol.ExitUsageError {
-		t.Fatalf("expected usage error, got %d stderr=%q", exit, errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "--need and --level may not be combined") {
-		t.Fatalf("expected explicit need/level conflict message, got %q", errOut.String())
+	if !strings.Contains(errOut.String(), "flag provided but not defined: -level") {
+		t.Fatalf("expected unknown level flag error, got %q", errOut.String())
 	}
 }
 
@@ -333,8 +314,8 @@ func TestContextUsagePrefersNeedAndDemotesLevel(t *testing.T) {
 	if !strings.Contains(errOut.String(), "[--need execute|edit|dependency-check|handoff|auto]") {
 		t.Fatalf("expected usage to advertise --need, got %q", errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "legacy compatibility: --level L0|L1|L2") {
-		t.Fatalf("expected usage to demote --level to compatibility path, got %q", errOut.String())
+	if strings.Contains(errOut.String(), "--level") {
+		t.Fatalf("expected usage to omit removed --level flag, got %q", errOut.String())
 	}
 }
 
