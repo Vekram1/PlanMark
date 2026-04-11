@@ -594,6 +594,7 @@ func TestResolveSyncSelectionSupportsLinear(t *testing.T) {
 }
 
 func TestSyncBeadsDryRunDoesNotWriteManifest(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -619,6 +620,7 @@ func TestSyncBeadsDryRunDoesNotWriteManifest(t *testing.T) {
 }
 
 func TestSyncBeadsDryRunJSONIncludesPlannedOps(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -669,6 +671,7 @@ func TestSyncBeadsDryRunJSONIncludesPlannedOps(t *testing.T) {
 }
 
 func TestSyncBeadsDryRunTextIncludesPlannedOps(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -723,6 +726,7 @@ func TestSyncBeadsJSONOmitsPlannedOpsWithoutDryRun(t *testing.T) {
 }
 
 func TestSyncBeadsCLIJSONOutputStable(t *testing.T) {
+	installCaptureBeadsAdapter(t)
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	stateDir := filepath.Join(tmp, ".planmark")
@@ -1936,12 +1940,12 @@ func TestSyncBeadsDeleteThenReAddSameIDDoesNotConflict(t *testing.T) {
 
 	var payload struct {
 		Data struct {
-			CreateCount   int `json:"create_count"`
-			UpdateCount   int `json:"update_count"`
-			NoopCount     int `json:"noop_count"`
+			CreateCount    int `json:"create_count"`
+			UpdateCount    int `json:"update_count"`
+			NoopCount      int `json:"noop_count"`
 			MarkStaleCount int `json:"mark_stale_count"`
-			ConflictCount int `json:"conflict_count"`
-			TasksMutated  int `json:"tasks_mutated"`
+			ConflictCount  int `json:"conflict_count"`
+			TasksMutated   int `json:"tasks_mutated"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
