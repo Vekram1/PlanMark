@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <img width="200" height="200" alt="PlanMark project task overview logo" src="https://github.com/user-attachments/assets/d4be234d-4c58-47cd-a29b-7951fefe5ed2" />
+  <img width="300" height="300" alt="PlanMark project task overview logo" src="https://github.com/user-attachments/assets/d4be234d-4c58-47cd-a29b-7951fefe5ed2" />
   <br>
   PlanMark
 </h1>
@@ -11,8 +11,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-lightblue.svg)](./LICENSE)
 ![Go](https://img.shields.io/badge/language-Go-00ADD8.svg)
-![Deterministic](https://img.shields.io/badge/design-deterministic-222222.svg)
-
 </div>
 
 <p align="center">

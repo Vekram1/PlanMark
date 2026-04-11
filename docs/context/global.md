@@ -77,9 +77,6 @@ Use need-based retrieval by default:
 3. Use `plan open` / `plan explain` for targeted page faults before asking for richer context.
 4. Read full `PLAN.md` only when required by unresolved ambiguity or contract-level work.
 
-Legacy compatibility:
-- `plan context --level L0|L1|L2` remains available during migration, but `--need` is the primary interface.
-
 Escalation trigger rule:
 - Include a one-line reason in agent updates, e.g.:
   - `Escalating to file-backed context: acceptance references docs/specs/context-selection-v0.1.md.`
