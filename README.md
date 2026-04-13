@@ -30,6 +30,8 @@
 ---
 
 <a id="why-this-project-exists"></a>
+Video Demo: https://www.youtube.com/watch?v=ky3cAu_8k_Y
+
 ## Why This Project Exists
 
 Most planning systems drift.
