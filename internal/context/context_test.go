@@ -828,7 +828,7 @@ func TestSelectByNeedDependencyCheckIncludesClosureForDeclaredDeps(t *testing.T)
 	}
 }
 
-func TestSelectByNeedHandoffDoesNotAutoExpandDepsOnlyTask(t *testing.T) {
+func TestSelectByNeedHandoffIncludesDirectDependencies(t *testing.T) {
 	tmp := t.TempDir()
 	planPath := filepath.Join(tmp, "PLAN.md")
 	content := strings.Join([]string{
@@ -856,27 +856,27 @@ func TestSelectByNeedHandoffDoesNotAutoExpandDepsOnlyTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("select by need: %v", err)
 	}
-	if packet.SelectedContextClass != "task" {
-		t.Fatalf("expected bounded handoff task packet, got %#v", packet)
+	if packet.SelectedContextClass != "task+deps" {
+		t.Fatalf("expected bounded handoff deps packet, got %#v", packet)
 	}
 	if len(packet.Closure) != 0 {
-		t.Fatalf("expected no dependency closure in default handoff packet, got %#v", packet.Closure)
+		t.Fatalf("expected no dependency closure in bounded handoff packet, got %#v", packet.Closure)
 	}
-	if packet.NextUpgrade != "task+deps" {
-		t.Fatalf("expected next upgrade task+deps, got %#v", packet)
+	if len(packet.Dependencies) != 1 || packet.Dependencies[0].TaskID != "task.dep" {
+		t.Fatalf("expected direct dependency summary in handoff packet, got %#v", packet.Dependencies)
 	}
 	if len(packet.IncludedDeps) != 1 || packet.IncludedDeps[0] != "task.dep" {
 		t.Fatalf("expected compatibility included deps for handoff deps-only task, got %#v", packet.IncludedDeps)
 	}
-	if len(packet.IncludedDepRefs) != 1 || packet.IncludedDepRefs[0].TaskID != "task.dep" || packet.IncludedDepRefs[0].Reason != "declared task dependencies require graph reasoning" {
+	if len(packet.IncludedDepRefs) != 1 || packet.IncludedDepRefs[0].TaskID != "task.dep" || packet.IncludedDepRefs[0].Reason != "direct upstream dependencies constrain handoff ordering" {
 		t.Fatalf("expected structured dep refs for handoff deps-only task, got %#v", packet.IncludedDepRefs)
 	}
-	if len(packet.RemainingRisks) != 1 || !strings.Contains(packet.RemainingRisks[0], "dependency semantics omitted") {
-		t.Fatalf("expected dependency omission risk, got %#v", packet.RemainingRisks)
+	if len(packet.RemainingRisks) != 0 {
+		t.Fatalf("expected no remaining risk for direct-deps-only handoff, got %#v", packet.RemainingRisks)
 	}
 }
 
-func TestSelectByNeedHandoffFilesAndDepsStaysFileBounded(t *testing.T) {
+func TestSelectByNeedHandoffFilesAndDepsIncludesBoundedNeighborhood(t *testing.T) {
 	tmp := t.TempDir()
 	targetPath := filepath.Join(tmp, "docs", "specs", "context-selection-v0.1.md")
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
@@ -912,17 +912,62 @@ func TestSelectByNeedHandoffFilesAndDepsStaysFileBounded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("select by need: %v", err)
 	}
-	if packet.SelectedContextClass != "task+files" {
-		t.Fatalf("expected task+files handoff packet, got %#v", packet)
+	if packet.SelectedContextClass != "task+files+deps" {
+		t.Fatalf("expected task+files+deps handoff packet, got %#v", packet)
 	}
 	if len(packet.Closure) != 0 {
-		t.Fatalf("expected no dependency closure in default handoff packet, got %#v", packet.Closure)
+		t.Fatalf("expected no dependency closure in bounded handoff packet, got %#v", packet.Closure)
 	}
-	if packet.NextUpgrade != "task+files+deps" {
-		t.Fatalf("expected next upgrade task+files+deps, got %#v", packet)
+	if len(packet.Dependencies) != 1 || packet.Dependencies[0].TaskID != "task.dep" {
+		t.Fatalf("expected direct dependency summary in handoff packet, got %#v", packet.Dependencies)
 	}
-	if len(packet.RemainingRisks) != 1 || !strings.Contains(packet.RemainingRisks[0], "dependency semantics omitted") {
-		t.Fatalf("expected dependency omission risk, got %#v", packet.RemainingRisks)
+	if len(packet.RemainingRisks) != 0 {
+		t.Fatalf("expected no dependency omission risk for direct dependency handoff, got %#v", packet.RemainingRisks)
+	}
+}
+
+func TestSelectByNeedEditIncludesDirectDependentsForImpactAwareness(t *testing.T) {
+	tmp := t.TempDir()
+	planPath := filepath.Join(tmp, "PLAN.md")
+	content := strings.Join([]string{
+		"- [ ] Shared task",
+		"  @id task.shared",
+		"  @horizon now",
+		"  @accept cmd:go test ./...",
+		"",
+		"- [ ] Downstream A",
+		"  @id task.a",
+		"  @horizon now",
+		"  @deps task.shared",
+		"  @accept cmd:go test ./...",
+		"",
+		"- [ ] Downstream B",
+		"  @id task.b",
+		"  @horizon now",
+		"  @deps task.shared",
+		"  @accept cmd:go test ./...",
+	}, "\n")
+	if err := os.WriteFile(planPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	compiled, err := compile.CompilePlan(planPath, []byte(content), compile.NewParser(nil))
+	if err != nil {
+		t.Fatalf("compile plan: %v", err)
+	}
+
+	packet, err := SelectByNeed(compiled, "task.shared", NeedEdit)
+	if err != nil {
+		t.Fatalf("select by need: %v", err)
+	}
+	if packet.SelectedContextClass != "task+dependents" {
+		t.Fatalf("expected dependent-aware edit packet, got %#v", packet)
+	}
+	if len(packet.Dependents) != 2 || packet.Dependents[0].TaskID != "task.a" || packet.Dependents[1].TaskID != "task.b" {
+		t.Fatalf("expected deterministic direct dependents, got %#v", packet.Dependents)
+	}
+	if len(packet.IncludedDependentRefs) != 2 || packet.IncludedDependentRefs[0].TaskID != "task.a" || packet.IncludedDependentRefs[1].TaskID != "task.b" {
+		t.Fatalf("expected structured direct dependent refs, got %#v", packet.IncludedDependentRefs)
 	}
 }
 
@@ -1062,8 +1107,8 @@ func TestNeedStatsDeterministicAcrossRepeatedSelection(t *testing.T) {
 	if !reflect.DeepEqual(packetA.Stats, packetB.Stats) {
 		t.Fatalf("expected repeated selection stats to be deterministic:\nfirst=%#v\nsecond=%#v", packetA.Stats, packetB.Stats)
 	}
-	if packetA.SelectedContextClass != "task+files" {
-		t.Fatalf("expected task+files packet, got %#v", packetA.SelectedContextClass)
+	if packetA.SelectedContextClass != "task+files+deps" {
+		t.Fatalf("expected task+files+deps packet, got %#v", packetA.SelectedContextClass)
 	}
 	if !reflect.DeepEqual(packetA.IncludedFileRefs, packetB.IncludedFileRefs) {
 		t.Fatalf("expected repeated included file refs to match:\nfirst=%#v\nsecond=%#v", packetA.IncludedFileRefs, packetB.IncludedFileRefs)

@@ -338,9 +338,9 @@ planmark handoff api.migrate --plan PLAN.md --format json
 
 The public interface is need-based:
 - `--need execute`: task-local execution context with the exact `PLAN.md` source slice
-- `--need edit`: task-local context plus source extracts when the task points to files or ranges
+- `--need edit`: task-local context plus source extracts and bounded graph neighborhood when files, prerequisites, or direct dependents matter
 - `--need dependency-check`: task-local context plus dependency-closure context
-- `--need handoff`: a handoff-oriented packet for transferring work cleanly
+- `--need handoff`: a handoff-oriented packet with bounded upstream/downstream task summaries for transferring work cleanly
 
 In practice, the right approach is to start small and escalate only when needed:
 1. `planmark context <id> --need execute`

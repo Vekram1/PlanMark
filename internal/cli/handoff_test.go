@@ -62,8 +62,8 @@ func TestHandoffPacketDeterministic(t *testing.T) {
 	if data["need"] != "handoff" {
 		t.Fatalf("expected handoff need, got %v", data["need"])
 	}
-	if data["selected_context_class"] != "task" {
-		t.Fatalf("expected bounded handoff class task, got %v", data["selected_context_class"])
+	if data["selected_context_class"] != "task+deps" {
+		t.Fatalf("expected bounded handoff class task+deps, got %v", data["selected_context_class"])
 	}
 	if data["sufficient_for_need"] != true {
 		t.Fatalf("expected sufficient_for_need=true, got %v", data["sufficient_for_need"])
@@ -89,6 +89,10 @@ func TestHandoffPacketDeterministic(t *testing.T) {
 	if _, ok := data["included_file_refs"]; ok {
 		t.Fatalf("expected deps-only handoff packet to omit included_file_refs, got %T", data["included_file_refs"])
 	}
+	dependencies, ok := data["dependencies"].([]any)
+	if !ok || len(dependencies) != 1 {
+		t.Fatalf("expected direct dependencies in handoff packet, got %v", data["dependencies"])
+	}
 	deps, ok := data["included_deps"].([]any)
 	if !ok || len(deps) != 1 || deps[0] != "fixture.task.dep" {
 		t.Fatalf("expected compatibility included_deps in handoff packet, got %v", data["included_deps"])
@@ -106,8 +110,8 @@ func TestHandoffPacketDeterministic(t *testing.T) {
 		t.Fatalf("expected stats object in handoff packet, got %T", data["stats"])
 	}
 	path, ok := stats["escalation_path"].([]any)
-	if !ok || len(path) != 1 || path[0] != "task" {
-		t.Fatalf("expected bounded handoff escalation path [task], got %#v", stats["escalation_path"])
+	if !ok || len(path) != 2 || path[0] != "task" || path[1] != "task+deps" {
+		t.Fatalf("expected bounded handoff escalation path [task task+deps], got %#v", stats["escalation_path"])
 	}
 }
 
@@ -165,10 +169,13 @@ func TestHandoffTextIncludesStructuredRefCountsAndNextUpgrade(t *testing.T) {
 	if !strings.Contains(out.String(), "included_file_refs: 1") {
 		t.Fatalf("expected handoff text to include structured file-ref count, got %q", out.String())
 	}
-	if !strings.Contains(out.String(), "included_dep_refs: 0") {
+	if !strings.Contains(out.String(), "included_dep_refs: 1") {
 		t.Fatalf("expected handoff text to include structured dep-ref count, got %q", out.String())
 	}
-	if !strings.Contains(out.String(), "next_upgrade: task+files+deps") {
+	if !strings.Contains(out.String(), "dependencies: 1") {
+		t.Fatalf("expected handoff text to include direct dependency summary count, got %q", out.String())
+	}
+	if !strings.Contains(out.String(), "next_upgrade: task+files+deps+dependents") {
 		t.Fatalf("expected handoff text to include next_upgrade, got %q", out.String())
 	}
 }

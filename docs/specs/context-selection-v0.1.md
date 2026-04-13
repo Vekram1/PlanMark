@@ -150,9 +150,11 @@ Task-local packet content should include:
 Default selection target:
 
 - `task+files` when deterministic file-surface triggers are present
-- otherwise `task`
+- `task+dependents`, `task+deps`, or `task+deps+dependents` when graph-local impact or prerequisite context is required
+- combine file and graph expansion deterministically when both are present
 
 `edit` should include concrete repo surfaces when the task itself signals that editing is likely to require them.
+It should also include a bounded local graph neighborhood when editing a task is likely to impact direct dependents or when direct prerequisites constrain the edit.
 
 Deterministic file-evidence triggers include:
 
@@ -186,7 +188,7 @@ Dependency packets should include dependency summaries, not unrestricted raw rec
 Default selection target:
 
 - `task`
-- escalate to `task+files`, `task+deps`, or `task+files+deps` when deterministic triggers justify the expansion
+- escalate to a bounded local neighborhood: `task+deps`, `task+dependents`, `task+deps+dependents`, and file-augmented variants when deterministic triggers justify the expansion
 
 `handoff` exists because agent transfer usually benefits from a richer packet than immediate execution, but it must still remain bounded and deterministic.
 
@@ -198,14 +200,17 @@ Default selection target:
 - evidence
 - selection metadata
 - file evidence when required
-- dependency summaries when required
+- direct upstream dependency summaries when required
+- direct downstream dependent summaries when required
 
-For v0.1, `handoff` should not automatically include dependency closure merely because the task declares `@deps`.
+For v0.1, `handoff` should not automatically include full upstream dependency closure merely because the task declares `@deps`.
 
 Instead:
 
 - `handoff` should include file-backed evidence when deterministic file triggers are present
-- `handoff` should expose `next_upgrade` and `remaining_risks` when dependency semantics are omitted
+- `handoff` should include direct upstream summaries when declared dependencies exist
+- `handoff` should include direct downstream summaries when other tasks depend on the handoff target
+- `handoff` should expose `next_upgrade` and `remaining_risks` when transitive upstream closure is omitted
 - dependency closure should remain the primary responsibility of `dependency-check` unless future policy adds stronger handoff-specific dependency triggers
 
 ### `auto`
@@ -216,6 +221,7 @@ For v0.1, the intended behavior is:
 
 - start from `task`
 - escalate only when deterministic triggers show that task-local context is insufficient for the inferred immediate operation
+- prefer direct graph neighborhood before full dependency closure
 - prefer under-expansion over unrestricted expansion
 - preserve a clear upgrade path when the packet is not sufficient
 
@@ -251,15 +257,29 @@ Escalation path:
 
 For v0.1, dependency-closure misses should normally be satisfied only for `dependency-check`, or for future policy-approved handoff cases that explicitly require graph reasoning in the transfer packet.
 
+### Downstream-Impact Miss
+
+A downstream-impact miss exists when:
+
+- the requested need is `edit`, `handoff`, or `auto`
+- and other tasks directly depend on the current task
+- and the current packet does not include bounded downstream summaries
+
+Escalation path:
+
+- `task` -> `task+dependents`
+
 ### Combined Miss
 
 A combined miss exists when:
 
-- both file-evidence and dependency-closure miss conditions are present
+- file-evidence and graph-neighborhood miss conditions are both present
 
 Escalation path:
 
 - `task` -> `task+files+deps`
+- `task` -> `task+files+dependents`
+- `task` -> `task+files+deps+dependents`
 
 ### Full-Plan Fallback
 
@@ -285,17 +305,21 @@ Minimum fields for v0.1:
 - `escalation_reasons`
 - `included_files`
 - `included_deps`
+- `included_dependents`
 - `included_file_refs`
 - `included_dep_refs`
+- `included_dependent_refs`
 - `remaining_risks`
 - `next_upgrade`
 
 Compatibility rule for v0.1:
 
 - `included_files` and `included_deps` may remain as simple string arrays for compatibility
+- `included_dependents` may remain as a simple string array for compatibility
 - richer additive fields should carry deterministic per-item reasons:
   - `included_file_refs`: `{path, reason}`
   - `included_dep_refs`: `{task_id, reason}`
+  - `included_dependent_refs`: `{task_id, reason}`
 - for v0.1, file-ref reasons may be a stable coarse-grained file-evidence reason while the more specific trigger list remains in `escalation_reasons`
 - the richer fields should be preferred by new agent integrations once available
 

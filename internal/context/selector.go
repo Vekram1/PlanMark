@@ -21,22 +21,26 @@ const (
 
 type NeedPacket struct {
 	L0Packet
-	Query                string         `json:"query"`
-	Need                 string         `json:"need"`
-	SelectedContextClass string         `json:"selected_context_class"`
-	SufficientForNeed    bool           `json:"sufficient_for_need"`
-	FallbackUsed         bool           `json:"fallback_used"`
-	FullPlanRequired     bool           `json:"full_plan_required"`
-	EscalationReasons    []string       `json:"escalation_reasons,omitempty"`
-	IncludedFiles        []string       `json:"included_files,omitempty"`
-	IncludedFileRefs     []IncludedFile `json:"included_file_refs,omitempty"`
-	IncludedDeps         []string       `json:"included_deps,omitempty"`
-	IncludedDepRefs      []IncludedDep  `json:"included_dep_refs,omitempty"`
-	RemainingRisks       []string       `json:"remaining_risks,omitempty"`
-	NextUpgrade          string         `json:"next_upgrade,omitempty"`
-	Pins                 []PinExtract   `json:"pins,omitempty"`
-	Closure              []L2Dependency `json:"closure,omitempty"`
-	Stats                ContextStats   `json:"stats"`
+	Query                 string         `json:"query"`
+	Need                  string         `json:"need"`
+	SelectedContextClass  string         `json:"selected_context_class"`
+	SufficientForNeed     bool           `json:"sufficient_for_need"`
+	FallbackUsed          bool           `json:"fallback_used"`
+	FullPlanRequired      bool           `json:"full_plan_required"`
+	EscalationReasons     []string       `json:"escalation_reasons,omitempty"`
+	IncludedFiles         []string       `json:"included_files,omitempty"`
+	IncludedFileRefs      []IncludedFile `json:"included_file_refs,omitempty"`
+	IncludedDeps          []string       `json:"included_deps,omitempty"`
+	IncludedDepRefs       []IncludedDep  `json:"included_dep_refs,omitempty"`
+	IncludedDependents    []string       `json:"included_dependents,omitempty"`
+	IncludedDependentRefs []IncludedDep  `json:"included_dependent_refs,omitempty"`
+	RemainingRisks        []string       `json:"remaining_risks,omitempty"`
+	NextUpgrade           string         `json:"next_upgrade,omitempty"`
+	Pins                  []PinExtract   `json:"pins,omitempty"`
+	Dependencies          []L2Dependency `json:"dependencies,omitempty"`
+	Dependents            []L2Dependency `json:"dependents,omitempty"`
+	Closure               []L2Dependency `json:"closure,omitempty"`
+	Stats                 ContextStats   `json:"stats"`
 }
 
 type IncludedFile struct {
@@ -91,6 +95,13 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 	pins, fileReasons, pinErr := collectFileEvidence(plan, task, node, base)
 	hasFileEvidence := pinErr == nil && len(pins) > 0
 	hasDeps := len(task.Deps) > 0
+	dependencies, dependents, neighborhoodErr := collectGraphNeighborhood(plan, task)
+	if neighborhoodErr != nil {
+		return NeedPacket{}, neighborhoodErr
+	}
+	hasDirectDeps := len(dependencies) > 0
+	hasDependents := len(dependents) > 0
+	hasNeighborhood := hasDirectDeps || hasDependents
 
 	switch need {
 	case NeedExecute:
@@ -99,17 +110,51 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 		if pinErr != nil {
 			return NeedPacket{}, pinErr
 		}
+		if hasNeighborhood {
+			packet.Level = "L2"
+			packet.Dependencies = append([]L2Dependency(nil), dependencies...)
+			packet.Dependents = append([]L2Dependency(nil), dependents...)
+			if hasDirectDeps {
+				packet.IncludedDeps = taskIDsFromSummaries(dependencies)
+				packet.IncludedDepRefs = buildIncludedDepRefs(packet.IncludedDeps, "direct upstream dependencies constrain task edits")
+				packet.EscalationReasons = append(packet.EscalationReasons, "direct upstream dependencies constrain task edits")
+			}
+			if hasDependents {
+				packet.IncludedDependents = taskIDsFromSummaries(dependents)
+				packet.IncludedDependentRefs = buildIncludedDepRefs(packet.IncludedDependents, "direct downstream tasks may be impacted by task edits")
+				packet.EscalationReasons = append(packet.EscalationReasons, "direct downstream tasks may be impacted by task edits")
+			}
+		}
 		if hasFileEvidence {
-			packet.SelectedContextClass = "task+files"
-			packet.Level = "L1"
 			packet.Pins = pins
-			packet.EscalationReasons = append([]string(nil), fileReasons...)
+			packet.EscalationReasons = append(packet.EscalationReasons, fileReasons...)
 			packet.IncludedFiles = pinTargetPaths(pins)
 			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
-			if hasDeps {
-				packet.NextUpgrade = "task+files+deps"
-			}
-		} else {
+		}
+		switch {
+		case hasFileEvidence && hasDirectDeps && hasDependents:
+			packet.SelectedContextClass = "task+files+deps+dependents"
+			packet.NextUpgrade = "task+files+deps-closure"
+		case hasFileEvidence && hasDirectDeps:
+			packet.SelectedContextClass = "task+files+deps"
+			packet.NextUpgrade = "task+files+deps-closure"
+		case hasFileEvidence && hasDependents:
+			packet.SelectedContextClass = "task+files+dependents"
+			packet.NextUpgrade = "task+files"
+		case hasDirectDeps && hasDependents:
+			packet.SelectedContextClass = "task+deps+dependents"
+			packet.NextUpgrade = "task+files+deps-closure"
+		case hasDirectDeps:
+			packet.SelectedContextClass = "task+deps"
+			packet.NextUpgrade = "task+files+deps-closure"
+		case hasDependents:
+			packet.SelectedContextClass = "task+dependents"
+			packet.NextUpgrade = "task+files"
+		case hasFileEvidence:
+			packet.SelectedContextClass = "task+files"
+			packet.Level = "L1"
+			packet.NextUpgrade = "task+files+deps+dependents"
+		default:
 			packet.NextUpgrade = "task+files"
 		}
 	case NeedDependencyCheck:
@@ -134,51 +179,104 @@ func SelectByNeed(plan ir.PlanIR, taskID string, need Need) (NeedPacket, error) 
 		if pinErr != nil {
 			return NeedPacket{}, pinErr
 		}
+		if hasNeighborhood {
+			packet.Level = "L2"
+			packet.Dependencies = append([]L2Dependency(nil), dependencies...)
+			packet.Dependents = append([]L2Dependency(nil), dependents...)
+			if hasDirectDeps {
+				packet.IncludedDeps = taskIDsFromSummaries(dependencies)
+				packet.IncludedDepRefs = buildIncludedDepRefs(packet.IncludedDeps, "direct upstream dependencies constrain handoff ordering")
+				packet.EscalationReasons = append(packet.EscalationReasons, "direct upstream dependencies constrain handoff ordering")
+			}
+			if hasDependents {
+				packet.IncludedDependents = taskIDsFromSummaries(dependents)
+				packet.IncludedDependentRefs = buildIncludedDepRefs(packet.IncludedDependents, "direct downstream tasks depend on this handoff target")
+				packet.EscalationReasons = append(packet.EscalationReasons, "direct downstream tasks depend on this handoff target")
+			}
+		}
+		if hasFileEvidence {
+			packet.Pins = pins
+			packet.EscalationReasons = append(packet.EscalationReasons, fileReasons...)
+			packet.IncludedFiles = pinTargetPaths(pins)
+			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
+		}
 		switch {
-		case hasFileEvidence && hasDeps:
-			packet.Level = "L1"
-			packet.SelectedContextClass = "task+files"
-			packet.Pins = pins
-			packet.EscalationReasons = append([]string(nil), fileReasons...)
-			packet.IncludedFiles = pinTargetPaths(pins)
-			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
-			packet.NextUpgrade = "task+files+deps"
-			packet.RemainingRisks = []string{"dependency semantics omitted from handoff packet; upgrade to task+files+deps when ordering or blocker analysis is required"}
+		case hasFileEvidence && hasDirectDeps && hasDependents:
+			packet.SelectedContextClass = "task+files+deps+dependents"
+		case hasFileEvidence && hasDirectDeps:
+			packet.SelectedContextClass = "task+files+deps"
+		case hasFileEvidence && hasDependents:
+			packet.SelectedContextClass = "task+files+dependents"
+		case hasDirectDeps && hasDependents:
+			packet.SelectedContextClass = "task+deps+dependents"
+		case hasDirectDeps:
+			packet.SelectedContextClass = "task+deps"
+		case hasDependents:
+			packet.SelectedContextClass = "task+dependents"
 		case hasFileEvidence:
-			packet.Level = "L1"
 			packet.SelectedContextClass = "task+files"
-			packet.Pins = pins
-			packet.EscalationReasons = append([]string(nil), fileReasons...)
-			packet.IncludedFiles = pinTargetPaths(pins)
-			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
-			packet.NextUpgrade = "task+files+deps"
-		case hasDeps:
-			packet.NextUpgrade = "task+deps"
-			packet.IncludedDeps = append([]string(nil), task.Deps...)
-			packet.IncludedDepRefs = buildIncludedDepRefs(task.Deps, "declared task dependencies require graph reasoning")
-			packet.RemainingRisks = []string{"dependency semantics omitted from handoff packet; upgrade to task+deps when ordering or blocker analysis is required"}
+			packet.Level = "L1"
+		}
+		switch {
+		case hasDirectDeps && directDependenciesHaveOwnDeps(dependencies):
+			packet.NextUpgrade = "task+deps-closure"
+			if hasFileEvidence {
+				packet.NextUpgrade = "task+files+deps-closure"
+			}
+			packet.RemainingRisks = []string{"transitive upstream dependency closure omitted from bounded handoff packet; upgrade when blocker-chain analysis is required"}
+		case hasFileEvidence && !hasNeighborhood:
+			packet.NextUpgrade = "task+files+deps+dependents"
+		case hasDirectDeps || hasDependents:
+			packet.NextUpgrade = "task+files+deps+dependents"
 		default:
-			packet.NextUpgrade = "task+files+deps"
+			packet.NextUpgrade = "task+files+deps+dependents"
 		}
 	case NeedAuto:
 		if pinErr != nil {
 			return NeedPacket{}, pinErr
 		}
 		switch {
-		case hasFileEvidence:
-			packet.Level = "L1"
-			if hasDeps {
-				packet.SelectedContextClass = "task+files"
-				packet.NextUpgrade = "task+files+deps"
-			} else {
-				packet.SelectedContextClass = "task+files"
-			}
+		case hasFileEvidence && hasNeighborhood:
+			packet.Level = "L2"
 			packet.Pins = pins
 			packet.EscalationReasons = append([]string(nil), fileReasons...)
 			packet.IncludedFiles = pinTargetPaths(pins)
 			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
+			packet.Dependencies = append([]L2Dependency(nil), dependencies...)
+			packet.Dependents = append([]L2Dependency(nil), dependents...)
+			packet.IncludedDeps = taskIDsFromSummaries(dependencies)
+			packet.IncludedDepRefs = buildIncludedDepRefs(packet.IncludedDeps, "direct upstream dependencies constrain immediate work")
+			packet.IncludedDependents = taskIDsFromSummaries(dependents)
+			packet.IncludedDependentRefs = buildIncludedDepRefs(packet.IncludedDependents, "direct downstream tasks may be impacted by immediate work")
+			packet.SelectedContextClass = composeGraphContextClass(true, hasDirectDeps, hasDependents)
+			packet.NextUpgrade = "task+files+deps-closure"
+		case hasFileEvidence:
+			packet.Level = "L1"
+			packet.SelectedContextClass = "task+files"
+			packet.Pins = pins
+			packet.EscalationReasons = append([]string(nil), fileReasons...)
+			packet.IncludedFiles = pinTargetPaths(pins)
+			packet.IncludedFileRefs = buildIncludedFileRefs(pins)
+			if hasDeps || hasDependents {
+				packet.NextUpgrade = "task+files+deps+dependents"
+			}
 		case hasDeps:
+			packet.Level = "L2"
+			packet.SelectedContextClass = composeGraphContextClass(false, hasDirectDeps, hasDependents)
+			packet.Dependencies = append([]L2Dependency(nil), dependencies...)
+			packet.Dependents = append([]L2Dependency(nil), dependents...)
+			packet.IncludedDeps = taskIDsFromSummaries(dependencies)
+			packet.IncludedDepRefs = buildIncludedDepRefs(packet.IncludedDeps, "direct upstream dependencies constrain immediate work")
+			packet.IncludedDependents = taskIDsFromSummaries(dependents)
+			packet.IncludedDependentRefs = buildIncludedDepRefs(packet.IncludedDependents, "direct downstream tasks may be impacted by immediate work")
 			packet.NextUpgrade = "task+deps"
+		case hasDependents:
+			packet.Level = "L2"
+			packet.SelectedContextClass = "task+dependents"
+			packet.Dependents = append([]L2Dependency(nil), dependents...)
+			packet.IncludedDependents = taskIDsFromSummaries(dependents)
+			packet.IncludedDependentRefs = buildIncludedDepRefs(packet.IncludedDependents, "direct downstream tasks may be impacted by immediate work")
+			packet.NextUpgrade = "task+files"
 		default:
 			packet.NextUpgrade = "task+files"
 		}
@@ -214,7 +312,13 @@ func packetLineCount(packet NeedPacket) int {
 	for _, pin := range packet.Pins {
 		total += lineRangeSize(pin.StartLine, pin.EndLine)
 	}
+	for _, dep := range packet.Dependencies {
+		total += lineRangeSize(dep.StartLine, dep.EndLine)
+	}
 	for _, dep := range packet.Closure {
+		total += lineRangeSize(dep.StartLine, dep.EndLine)
+	}
+	for _, dep := range packet.Dependents {
 		total += lineRangeSize(dep.StartLine, dep.EndLine)
 	}
 	return total
@@ -230,7 +334,17 @@ func packetFileCount(packet NeedPacket) int {
 			paths[path] = struct{}{}
 		}
 	}
+	for _, dep := range packet.Dependencies {
+		if path := strings.TrimSpace(dep.SourcePath); path != "" {
+			paths[path] = struct{}{}
+		}
+	}
 	for _, dep := range packet.Closure {
+		if path := strings.TrimSpace(dep.SourcePath); path != "" {
+			paths[path] = struct{}{}
+		}
+	}
+	for _, dep := range packet.Dependents {
 		if path := strings.TrimSpace(dep.SourcePath); path != "" {
 			paths[path] = struct{}{}
 		}
@@ -239,22 +353,37 @@ func packetFileCount(packet NeedPacket) int {
 }
 
 func packetDepCount(packet NeedPacket) int {
+	total := len(packet.Dependencies) + len(packet.Closure) + len(packet.Dependents)
+	if total > 0 {
+		return total
+	}
 	if len(packet.Closure) > 0 {
 		return len(packet.Closure)
 	}
-	if len(packet.IncludedDeps) > 0 {
-		return len(packet.IncludedDeps)
+	if len(packet.IncludedDeps) > 0 || len(packet.IncludedDependents) > 0 {
+		return len(packet.IncludedDeps) + len(packet.IncludedDependents)
 	}
 	return 0
 }
 
 func packetTokenText(packet NeedPacket) string {
-	parts := make([]string, 0, 1+len(packet.Pins)+len(packet.Closure))
+	parts := make([]string, 0, 1+len(packet.Pins)+len(packet.Dependencies)+len(packet.Closure)+len(packet.Dependents))
 	if text := strings.TrimSpace(packet.SliceText); text != "" {
 		parts = append(parts, text)
 	}
 	for _, pin := range packet.Pins {
 		if text := strings.TrimSpace(pin.SliceText); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	for _, dep := range packet.Dependencies {
+		summary := strings.Join([]string{
+			strings.TrimSpace(dep.TaskID),
+			strings.TrimSpace(dep.Title),
+			strings.Join(dep.Deps, " "),
+			strings.Join(dep.Accept, " "),
+		}, "\n")
+		if text := strings.TrimSpace(summary); text != "" {
 			parts = append(parts, text)
 		}
 	}
@@ -269,7 +398,142 @@ func packetTokenText(packet NeedPacket) string {
 			parts = append(parts, text)
 		}
 	}
+	for _, dep := range packet.Dependents {
+		summary := strings.Join([]string{
+			strings.TrimSpace(dep.TaskID),
+			strings.TrimSpace(dep.Title),
+			strings.Join(dep.Deps, " "),
+			strings.Join(dep.Accept, " "),
+		}, "\n")
+		if text := strings.TrimSpace(summary); text != "" {
+			parts = append(parts, text)
+		}
+	}
 	return strings.Join(parts, "\n")
+}
+
+func collectGraphNeighborhood(plan ir.PlanIR, task ir.Task) ([]L2Dependency, []L2Dependency, error) {
+	taskByID := make(map[string]ir.Task, len(plan.Semantic.Tasks))
+	nodeByRef := make(map[string]ir.SourceNode, len(plan.Source.Nodes))
+	for _, candidate := range plan.Semantic.Tasks {
+		taskByID[strings.TrimSpace(candidate.ID)] = candidate
+	}
+	for _, node := range plan.Source.Nodes {
+		nodeByRef[node.NodeRef] = node
+	}
+
+	dependencies, err := buildTaskSummaries(plan, task.Deps, taskByID, nodeByRef)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dependentIDs := make([]string, 0, len(plan.Semantic.Tasks))
+	rootID := strings.TrimSpace(task.ID)
+	for _, candidate := range plan.Semantic.Tasks {
+		candidateID := strings.TrimSpace(candidate.ID)
+		if candidateID == "" || candidateID == rootID {
+			continue
+		}
+		for _, depID := range candidate.Deps {
+			if strings.TrimSpace(depID) == rootID {
+				dependentIDs = append(dependentIDs, candidateID)
+				break
+			}
+		}
+	}
+	dependents, err := buildTaskSummaries(plan, dependentIDs, taskByID, nodeByRef)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dependencies, dependents, nil
+}
+
+func buildTaskSummaries(plan ir.PlanIR, ids []string, taskByID map[string]ir.Task, nodeByRef map[string]ir.SourceNode) ([]L2Dependency, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(ids))
+	normalized := make([]string, 0, len(ids))
+	for _, id := range ids {
+		taskID := strings.TrimSpace(id)
+		if taskID == "" {
+			continue
+		}
+		if _, exists := seen[taskID]; exists {
+			continue
+		}
+		seen[taskID] = struct{}{}
+		normalized = append(normalized, taskID)
+	}
+	sort.Strings(normalized)
+
+	summaries := make([]L2Dependency, 0, len(normalized))
+	for _, id := range normalized {
+		task, ok := taskByID[id]
+		if !ok {
+			return nil, fmt.Errorf("dependency task not found: %s", id)
+		}
+		node, ok := nodeByRef[task.NodeRef]
+		if !ok {
+			return nil, fmt.Errorf("source node missing for dependency task %q (node_ref=%s)", task.ID, task.NodeRef)
+		}
+		summaries = append(summaries, L2Dependency{
+			TaskID:     task.ID,
+			NodeRef:    task.NodeRef,
+			Title:      task.Title,
+			Horizon:    task.Horizon,
+			Deps:       append([]string(nil), task.Deps...),
+			Accept:     append([]string(nil), task.Accept...),
+			SourcePath: plan.PlanPath,
+			StartLine:  node.StartLine,
+			EndLine:    node.EndLine,
+			SliceHash:  node.SliceHash,
+		})
+	}
+	return summaries, nil
+}
+
+func taskIDsFromSummaries(summaries []L2Dependency) []string {
+	if len(summaries) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		if taskID := strings.TrimSpace(summary.TaskID); taskID != "" {
+			ids = append(ids, taskID)
+		}
+	}
+	return ids
+}
+
+func composeGraphContextClass(hasFiles bool, hasDeps bool, hasDependents bool) string {
+	switch {
+	case hasFiles && hasDeps && hasDependents:
+		return "task+files+deps+dependents"
+	case hasFiles && hasDeps:
+		return "task+files+deps"
+	case hasFiles && hasDependents:
+		return "task+files+dependents"
+	case hasDeps && hasDependents:
+		return "task+deps+dependents"
+	case hasFiles:
+		return "task+files"
+	case hasDeps:
+		return "task+deps"
+	case hasDependents:
+		return "task+dependents"
+	default:
+		return "task"
+	}
+}
+
+func directDependenciesHaveOwnDeps(summaries []L2Dependency) bool {
+	for _, summary := range summaries {
+		if len(summary.Deps) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func estimateTokens(text string) int {

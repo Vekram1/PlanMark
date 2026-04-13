@@ -16,30 +16,34 @@ import (
 )
 
 type handoffPacket struct {
-	Query                string                       `json:"query"`
-	PlanPath             string                       `json:"plan_path"`
-	GlobalContextRefs    []string                     `json:"global_context_refs"`
-	Need                 string                       `json:"need"`
-	SelectedContextClass string                       `json:"selected_context_class"`
-	SufficientForNeed    bool                         `json:"sufficient_for_need"`
-	FallbackUsed         bool                         `json:"fallback_used"`
-	FullPlanRequired     bool                         `json:"full_plan_required"`
-	EscalationReasons    []string                     `json:"escalation_reasons,omitempty"`
-	IncludedFiles        []string                     `json:"included_files,omitempty"`
-	IncludedFileRefs     []contextpkg.IncludedFile    `json:"included_file_refs,omitempty"`
-	IncludedDeps         []string                     `json:"included_deps,omitempty"`
-	IncludedDepRefs      []contextpkg.IncludedDep     `json:"included_dep_refs,omitempty"`
-	RemainingRisks       []string                     `json:"remaining_risks,omitempty"`
-	NextUpgrade          string                       `json:"next_upgrade,omitempty"`
-	Pins                 []contextpkg.PinExtract      `json:"pins,omitempty"`
-	Closure              []contextpkg.L2Dependency    `json:"closure,omitempty"`
-	Stats                contextpkg.ContextStats      `json:"stats"`
-	Slice                contextpkg.OpenResult        `json:"slice"`
-	Steps                []contextpkg.TaskStepContext `json:"steps,omitempty"`
-	Evidence             []contextpkg.EvidenceSlice   `json:"evidence,omitempty"`
-	DepsPointers         []string                     `json:"deps_pointers,omitempty"`
-	Blockers             []contextpkg.ExplainBlocker  `json:"blockers,omitempty"`
-	SuggestedMetadata    []string                     `json:"suggested_metadata,omitempty"`
+	Query                 string                       `json:"query"`
+	PlanPath              string                       `json:"plan_path"`
+	GlobalContextRefs     []string                     `json:"global_context_refs"`
+	Need                  string                       `json:"need"`
+	SelectedContextClass  string                       `json:"selected_context_class"`
+	SufficientForNeed     bool                         `json:"sufficient_for_need"`
+	FallbackUsed          bool                         `json:"fallback_used"`
+	FullPlanRequired      bool                         `json:"full_plan_required"`
+	EscalationReasons     []string                     `json:"escalation_reasons,omitempty"`
+	IncludedFiles         []string                     `json:"included_files,omitempty"`
+	IncludedFileRefs      []contextpkg.IncludedFile    `json:"included_file_refs,omitempty"`
+	IncludedDeps          []string                     `json:"included_deps,omitempty"`
+	IncludedDepRefs       []contextpkg.IncludedDep     `json:"included_dep_refs,omitempty"`
+	IncludedDependents    []string                     `json:"included_dependents,omitempty"`
+	IncludedDependentRefs []contextpkg.IncludedDep     `json:"included_dependent_refs,omitempty"`
+	RemainingRisks        []string                     `json:"remaining_risks,omitempty"`
+	NextUpgrade           string                       `json:"next_upgrade,omitempty"`
+	Pins                  []contextpkg.PinExtract      `json:"pins,omitempty"`
+	Dependencies          []contextpkg.L2Dependency    `json:"dependencies,omitempty"`
+	Dependents            []contextpkg.L2Dependency    `json:"dependents,omitempty"`
+	Closure               []contextpkg.L2Dependency    `json:"closure,omitempty"`
+	Stats                 contextpkg.ContextStats      `json:"stats"`
+	Slice                 contextpkg.OpenResult        `json:"slice"`
+	Steps                 []contextpkg.TaskStepContext `json:"steps,omitempty"`
+	Evidence              []contextpkg.EvidenceSlice   `json:"evidence,omitempty"`
+	DepsPointers          []string                     `json:"deps_pointers,omitempty"`
+	Blockers              []contextpkg.ExplainBlocker  `json:"blockers,omitempty"`
+	SuggestedMetadata     []string                     `json:"suggested_metadata,omitempty"`
 }
 
 func runHandoff(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -135,27 +139,31 @@ func runHandoff(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	packet := handoffPacket{
-		Query:                strings.TrimSpace(positionalID),
-		PlanPath:             compiled.PlanPath,
-		GlobalContextRefs:    []string{"AGENTS.md", "docs/context/global.md"},
-		Need:                 needPacket.Need,
-		SelectedContextClass: needPacket.SelectedContextClass,
-		SufficientForNeed:    needPacket.SufficientForNeed,
-		FallbackUsed:         needPacket.FallbackUsed,
-		FullPlanRequired:     needPacket.FullPlanRequired,
-		EscalationReasons:    append([]string(nil), needPacket.EscalationReasons...),
-		IncludedFiles:        append([]string(nil), needPacket.IncludedFiles...),
-		IncludedFileRefs:     append([]contextpkg.IncludedFile(nil), needPacket.IncludedFileRefs...),
-		IncludedDeps:         append([]string(nil), needPacket.IncludedDeps...),
-		IncludedDepRefs:      append([]contextpkg.IncludedDep(nil), needPacket.IncludedDepRefs...),
-		RemainingRisks:       append([]string(nil), needPacket.RemainingRisks...),
-		NextUpgrade:          needPacket.NextUpgrade,
-		Pins:                 append([]contextpkg.PinExtract(nil), needPacket.Pins...),
-		Closure:              append([]contextpkg.L2Dependency(nil), needPacket.Closure...),
-		Stats:                needPacket.Stats,
-		Slice:                openResult,
-		Steps:                append([]contextpkg.TaskStepContext(nil), openResult.Steps...),
-		Evidence:             append([]contextpkg.EvidenceSlice(nil), openResult.Evidence...),
+		Query:                 strings.TrimSpace(positionalID),
+		PlanPath:              compiled.PlanPath,
+		GlobalContextRefs:     []string{"AGENTS.md", "docs/context/global.md"},
+		Need:                  needPacket.Need,
+		SelectedContextClass:  needPacket.SelectedContextClass,
+		SufficientForNeed:     needPacket.SufficientForNeed,
+		FallbackUsed:          needPacket.FallbackUsed,
+		FullPlanRequired:      needPacket.FullPlanRequired,
+		EscalationReasons:     append([]string(nil), needPacket.EscalationReasons...),
+		IncludedFiles:         append([]string(nil), needPacket.IncludedFiles...),
+		IncludedFileRefs:      append([]contextpkg.IncludedFile(nil), needPacket.IncludedFileRefs...),
+		IncludedDeps:          append([]string(nil), needPacket.IncludedDeps...),
+		IncludedDepRefs:       append([]contextpkg.IncludedDep(nil), needPacket.IncludedDepRefs...),
+		IncludedDependents:    append([]string(nil), needPacket.IncludedDependents...),
+		IncludedDependentRefs: append([]contextpkg.IncludedDep(nil), needPacket.IncludedDependentRefs...),
+		RemainingRisks:        append([]string(nil), needPacket.RemainingRisks...),
+		NextUpgrade:           needPacket.NextUpgrade,
+		Pins:                  append([]contextpkg.PinExtract(nil), needPacket.Pins...),
+		Dependencies:          append([]contextpkg.L2Dependency(nil), needPacket.Dependencies...),
+		Dependents:            append([]contextpkg.L2Dependency(nil), needPacket.Dependents...),
+		Closure:               append([]contextpkg.L2Dependency(nil), needPacket.Closure...),
+		Stats:                 needPacket.Stats,
+		Slice:                 openResult,
+		Steps:                 append([]contextpkg.TaskStepContext(nil), openResult.Steps...),
+		Evidence:              append([]contextpkg.EvidenceSlice(nil), openResult.Evidence...),
 	}
 
 	if strings.TrimSpace(openResult.TaskID) != "" {
@@ -208,9 +216,12 @@ func runHandoff(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "steps: %d\n", len(packet.Steps))
 		fmt.Fprintf(stdout, "evidence: %d\n", len(packet.Evidence))
 		fmt.Fprintf(stdout, "pins: %d\n", len(packet.Pins))
+		fmt.Fprintf(stdout, "dependencies: %d\n", len(packet.Dependencies))
+		fmt.Fprintf(stdout, "dependents: %d\n", len(packet.Dependents))
 		fmt.Fprintf(stdout, "closure: %d\n", len(packet.Closure))
 		fmt.Fprintf(stdout, "included_file_refs: %d\n", len(packet.IncludedFileRefs))
 		fmt.Fprintf(stdout, "included_dep_refs: %d\n", len(packet.IncludedDepRefs))
+		fmt.Fprintf(stdout, "included_dependent_refs: %d\n", len(packet.IncludedDependentRefs))
 		fmt.Fprintf(stdout, "stats.included_lines: %d\n", packet.Stats.IncludedLines)
 		fmt.Fprintf(stdout, "stats.included_files_count: %d\n", packet.Stats.IncludedFilesCount)
 		fmt.Fprintf(stdout, "stats.included_deps_count: %d\n", packet.Stats.IncludedDepsCount)

@@ -160,8 +160,8 @@ func TestContextNeedJSONIncludesSelectionMetadata(t *testing.T) {
 	if data["query"] != "fixture.task.root" {
 		t.Fatalf("expected query fixture.task.root, got %v", data["query"])
 	}
-	if data["selected_context_class"] != "task+files" {
-		t.Fatalf("expected task+files selection, got %v", data["selected_context_class"])
+	if data["selected_context_class"] != "task+files+deps" {
+		t.Fatalf("expected task+files+deps selection, got %v", data["selected_context_class"])
 	}
 	if data["sufficient_for_need"] != true {
 		t.Fatalf("expected sufficient_for_need=true, got %v", data["sufficient_for_need"])
@@ -180,14 +180,17 @@ func TestContextNeedJSONIncludesSelectionMetadata(t *testing.T) {
 		t.Fatalf("expected quantitative stats fields, got %#v", stats)
 	}
 	path, ok := stats["escalation_path"].([]any)
-	if !ok || len(path) != 2 || path[0] != "task" || path[1] != "task+files" {
-		t.Fatalf("expected task -> task+files escalation path, got %#v", stats["escalation_path"])
+	if !ok || len(path) != 2 || path[0] != "task" || path[1] != "task+files+deps" {
+		t.Fatalf("expected task -> task+files+deps escalation path, got %#v", stats["escalation_path"])
 	}
 	if _, ok := data["sections"].([]any); !ok {
 		t.Fatalf("expected sections array in selected packet, got %T", data["sections"])
 	}
 	if _, ok := data["pins"].([]any); !ok {
 		t.Fatalf("expected pins array in selected packet, got %T", data["pins"])
+	}
+	if deps, ok := data["dependencies"].([]any); !ok || len(deps) != 1 {
+		t.Fatalf("expected dependencies array in selected packet, got %T %v", data["dependencies"], data["dependencies"])
 	}
 	fileRefs, ok := data["included_file_refs"].([]any)
 	if !ok || len(fileRefs) != 1 {
