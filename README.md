@@ -34,13 +34,11 @@ Video Demo: https://www.youtube.com/watch?v=ky3cAu_8k_Y
 
 ## Why This Project Exists
 
-Most planning systems drift.
+Most planning systems drift when AI agents use them to start coding.
 
-The plan starts as a Markdown file, but the real work gradually moves into issue trackers, chat threads, and ad hoc agent prompts. At that point:
+The plan starts as a Markdown file and that gets turned into issue trackers to manage context better for agents. At that point:
 - the tracker becomes the source of truth
-- agents scrape prose instead of consuming structure
-- provenance is lost
-- small edits create confusion about what actually changed
+- small edits to the plan create confusion about what actually changed
 
 PlanMark keeps `PLAN.md` canonical.
 
@@ -90,26 +88,16 @@ More concretely:
 ### The Problem
 
 You want to plan real work in Markdown, but:
-- raw Markdown is awkward for agents to consume safely
-- trackers drift from the source plan
-- dependencies and readiness become implicit
-- every tool wants to become the source of truth
+- large Markdown files are tricky for agents to consume and use 
+- trackers drift from the source plan when agents are asked to transform plan documents to issue trackers
 
 ### The Solution
 
 PlanMark compiles `PLAN.md` into deterministic outputs:
-- canonical IR
-- task context packets with exact provenance
-- readiness and diagnostic output
+- an intermediate representation that is 1 for 1 what the PLAN.md states
+- task context packets with exact mappings to the PLAN.md
 - tracker projections for systems like Beads
-- dependency-aware triage through `bv`
-
-### Why PlanMark
-
-- `PLAN.md` stays canonical
-- agents consume structured task context instead of scraping prose
-- tracker sync is a projection of the plan, not a replacement for it
-- compile, diagnostics, context, and handoff flows are deterministic and offline-safe
+- dependency-aware mapping through `bv`
 
 ---
 
@@ -157,7 +145,7 @@ Run dependency-aware triage:
 bv --robot-triage
 ```
 
-That loop is the whole point: the plan stays canonical, but the rest of the workflow becomes machine-usable.
+The plan stays canonical, but the rest of the workflow becomes machine-usable.
 
 ---
 
@@ -419,7 +407,6 @@ tracker:
 
 ---
 
-## Canonical vs Non-Canonical
 
 Canonical deterministic commands:
 - `planmark compile`
@@ -430,10 +417,6 @@ Canonical deterministic commands:
 - `planmark handoff`
 - `planmark sync`
 
-These are intended to stay deterministic and offline-safe.
-
-Optional assistive commands live under:
-- `planmark ai ...`
 
 Use AI helpers as drafting support, not as the source of truth.
 
