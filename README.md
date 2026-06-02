@@ -242,7 +242,7 @@ You do not need a separate DSL. Normal Markdown works, with a small amount of ta
 - `@deps`
 - `@accept`
 
-The most common fields are:
+The fields that can and should be used (not necessarilly requires) are:
 - `@id`: a stable task identifier used by context, change detection, and tracker sync
 - `@horizon`: when the task should be considered in the execution queue
 - `@deps`: task ids that must be completed first
@@ -317,7 +317,7 @@ The source slice matters. A context packet is not just a summary; it carries pro
 
 That means a caller can see exactly which part of the plan produced the task, rather than relying on brittle string matching or tracker text.
 
-The most common context commands are:
+The most useful context commands that the agent would use are:
 
 ```bash
 planmark context api.migrate --plan PLAN.md --need execute --format json
